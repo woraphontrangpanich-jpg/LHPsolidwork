@@ -327,3 +327,22 @@ body.demo .demo-only { display: flex; }
 .demo-cta .btn { display: inline-flex; align-items: center; text-decoration: none; height: 40px; }
 .demo-banner { background: var(--warn-bg); color: var(--ink); padding: 8px 16px; font-size: 13.5px; border-bottom: 1px solid var(--zinc-200); }
 .demo-banner a { color: var(--dim); margin-left: 6px; }
+
+/* ---------- static site: tabs + download page ---------- */
+body.demo .topnav { display: flex; }
+.topnav { gap: 4px; align-self: stretch; align-items: stretch; }
+.navtab { display: flex; align-items: center; padding: 0 12px; color: var(--steel); text-decoration: none; border-bottom: 2px solid transparent; font-weight: 500; }
+.navtab:hover { color: var(--ink); }
+.navtab[aria-current=page] { color: var(--ink); border-bottom-color: var(--ink); }
+.dlpage { min-height: calc(100% - 56px); padding: 48px 24px 56px; }
+.dl-wrap { max-width: 720px; margin: 0 auto; }
+.dlpage h1 { font-size: 30px; line-height: 1.35; font-weight: 600; }
+.dl-card { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 4px 0 34px; padding: 20px 22px; background: var(--paper); border: 1px solid var(--zinc-200); border-radius: 6px; }
+.dl-btn { height: 46px; padding: 0 24px; font-size: 16px; display: inline-flex; align-items: center; text-decoration: none; }
+.dl-meta { color: var(--steel); font-size: 13px; flex: 1; min-width: 220px; }
+.dl-steps p { color: var(--steel); line-height: 1.6; max-width: 60ch; }
+.dl-steps p b { color: var(--ink); font-weight: 600; }
+.dl-more { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--zinc-200); color: var(--steel); font-size: 14px; display: grid; gap: 8px; }
+.dl-more b { color: var(--ink); font-weight: 600; }
+.dl-more a { color: var(--dim); }
+@media (max-width: 600px) { .navtab { padding: 0 8px; font-size: 13px; } .dlpage { padding: 28px 16px; } .dlpage h1 { font-size: 24px; } }

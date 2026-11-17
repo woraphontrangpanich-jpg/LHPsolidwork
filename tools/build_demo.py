@@ -130,6 +130,7 @@ def main():
     html = html.replace('href="/" aria-label="SheetFlat"', 'href="./" aria-label="SheetFlat"')
     (DOCS / "index.html").write_text(html, encoding="utf-8")
     (DOCS / ".nojekyll").write_text("", encoding="utf-8")
+    shutil.copy(ROOT / "SheetFlat-Setup.cmd", DOCS / "SheetFlat-Setup.cmd")
     print("demo built:", DOCS, "| groups:", [(g["code"], g["pieces"]) for g in P["groups"]],
           "| excluded:", [(p["name"], p["qty"]) for p in P["parts"] if not p["include"]])
 

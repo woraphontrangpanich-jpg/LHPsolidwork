@@ -16,6 +16,10 @@
     <svg viewBox="0 0 28 28" width="26" height="26" aria-hidden="true"><path d="M3 8h22v12H3z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 8v12M17 8v12" stroke="var(--bend)" stroke-width="1.6" stroke-dasharray="2.5 2"/></svg>
     <span>SheetFlat</span>
   </a>
+  <nav class="topnav demo-only" aria-label="เมนู">
+    <a href="#" id="navTry" class="navtab" aria-current="page">ทดลองใช้งาน</a>
+    <a href="#download" id="navDl" class="navtab">ดาวน์โหลดโปรแกรม</a>
+  </nav>
   <div class="top-job" id="topJob" hidden>
     <span class="job-name" id="jobName"></span>
     <span class="job-meta" id="jobMeta"></span>
@@ -96,6 +100,32 @@
       </svg>
       <figcaption>ค่ายืดของรอยพับ 90° มาจากตารางของโรงงาน รอยพับมุมอื่นและส่วนโค้งคำนวณด้วย K-factor</figcaption>
     </figure>
+  </section>
+</main>
+
+<!-- ============ download (static site only) ============ -->
+<main id="dlPage" class="dlpage" hidden>
+  <section class="dl-wrap">
+    <h1>ดาวน์โหลด SheetFlat ไปใช้ในเครื่อง</h1>
+    <p class="lede">เวอร์ชันในเครื่องคลี่ไฟล์ STEP ของคุณได้จริง ใช้ได้ทุกฟังก์ชัน และไฟล์งานของลูกค้าไม่ถูกส่งขึ้นอินเทอร์เน็ต</p>
+    <div class="dl-card">
+      <a class="btn primary dl-btn" id="dlSetup" href="SheetFlat-Setup.cmd" download="SheetFlat-Setup.cmd">ดาวน์โหลดตัวติดตั้ง</a>
+      <p class="dl-meta">SheetFlat-Setup.cmd · Windows 10 / 11 · ไฟล์ขนาดไม่ถึง 2 KB ตัวติดตั้งจะดาวน์โหลดโปรแกรมล่าสุดให้เอง</p>
+    </div>
+    <ol class="steps dl-steps">
+      <li><h2>ดับเบิลคลิกไฟล์ที่ดาวน์โหลดมา</h2>
+        <p>ถ้าเบราว์เซอร์เตือนว่าไฟล์นี้ไม่ค่อยมีคนดาวน์โหลด ให้กด <b>Keep (เก็บไว้)</b> ถ้า Windows ขึ้นหน้าจอสีน้ำเงิน “Windows protected your PC” ให้กด <b>More info</b> แล้วกด <b>Run anyway</b> หน้าจอนี้ขึ้นกับทุกโปรแกรมที่ไม่ได้ซื้อใบรับรองผู้พัฒนา</p></li>
+      <li><h2>เลือกโฟลเดอร์ที่จะติดตั้ง</h2>
+        <p>จะมีหน้าต่างให้เลือกโฟลเดอร์ โปรแกรมสร้างโฟลเดอร์ “SheetFlat” ข้างในให้ ถ้าไม่แน่ใจกด OK ได้เลย</p></li>
+      <li><h2>รอติดตั้งครั้งแรก 3–5 นาที</h2>
+        <p>หน้าต่างสีดำจะติดตั้ง Python และส่วนประกอบให้เอง (ใช้อินเทอร์เน็ตประมาณ 200 MB) อย่าปิดหน้าต่างระหว่างนี้</p></li>
+      <li><h2>เริ่มใช้งาน</h2>
+        <p>เบราว์เซอร์จะเปิดหน้า SheetFlat ให้เอง และมีไอคอน <b>SheetFlat</b> บนหน้าจอ ครั้งต่อไปดับเบิลคลิกไอคอนได้เลย เปิดในไม่กี่วินาที</p></li>
+    </ol>
+    <div class="dl-more">
+      <p><b>อัปเดตเวอร์ชันใหม่:</b> รันตัวติดตั้งอีกครั้งแล้วเลือกโฟลเดอร์เดิม ตารางค่ายืดที่ตั้งไว้ไม่หาย</p>
+      <p><b>ทางอื่น:</b> <a href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/archive/refs/heads/main.zip">ดาวน์โหลดเป็น ZIP</a> แตกไฟล์แล้วดับเบิลคลิก <code>start.bat</code> · <a href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/blob/main/INSTALL.md" target="_blank" rel="noopener">คู่มือติดตั้งและแก้ปัญหา</a></p>
+    </div>
   </section>
 </main>
 

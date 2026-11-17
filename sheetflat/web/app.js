@@ -214,6 +214,22 @@ function exclHTML(p) {
     ${can && p.reason_code !== "not_sheet" ? `<button class="btn small" data-xinc="${p.id}">นำมาตัดอยู่ดี</button>` : ""}</div>`;
 }
 
+/* ---- static site: "try" and "download" tabs ---- */
+function route() {
+  const dl = location.hash === "#download";
+  $("#navDl").setAttribute("aria-current", dl ? "page" : "false");
+  $("#navTry").setAttribute("aria-current", dl ? "false" : "page");
+  $("#dlPage").hidden = !dl;
+  if (dl) {
+    $("#landing").hidden = true; $("#busy").hidden = true; $("#bench").hidden = true;
+    $("#topJob").hidden = true; $("#topActions").hidden = true;
+    window.scrollTo(0, 0);
+  } else if (S.project) {
+    enterBench();
+  } else {
+    $("#landing").hidden = false;
+  }
+}
 function selectOverview() { S.sel = { kind: "overview" }; renderRail(); renderInspector(); loadScene(); }
 function selectGroup(id) { S.sel = { kind: "group", id }; S.sheetIdx = 0; renderRail(); renderInspector(); loadScene(); }
 function selectPart(id) { S.sel = { kind: "part", id }; renderRail(); renderInspector(); loadScene(); }
@@ -835,6 +851,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#profileSel").addEventListener("change", (e) => patchSettings({ profile: e.target.value }));
   if (DEMO) {
     document.body.classList.add("demo");
+    window.addEventListener("hashchange", route);
+    route();
     try { S.demoFiles = await (await fetch(DEMO + "files.json")).json(); } catch (_) { S.demoFiles = {}; }
     const banner = document.getElementById("demoBanner"); if (banner) banner.hidden = false;
     const go = document.getElementById("demoGo");
