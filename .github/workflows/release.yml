@@ -1,0 +1,52 @@
+name: Release the Windows ZIP
+
+# Push a version tag to publish:   git tag v1.0.0 && git push origin v1.0.0
+# The ZIP is built here on GitHub (not on anyone's PC), tested, signed with a build
+# provenance attestation and attached to a GitHub Release. A published release never changes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the release
+  id-token: write        # build provenance attestation
+  attestations: write
+
+jobs:
+  windows-zip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install (every download checked against requirements.txt hashes)
+        run: |
+          python -m pip install --require-hashes -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Build and smoke-test the ZIP
+        env:
+          SHEETFLAT_VERSION: ${{ github.ref_name }}
+        run: python tools/build_portable.py --test
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/SheetFlat-windows.zip
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          SUM=$(cut -d' ' -f1 dist/SHA256SUMS.txt)
+          cat > notes.md <<EOF
+          ดาวน์โหลด **SheetFlat-windows.zip** แตกไฟล์ แล้วดับเบิลคลิก \`SheetFlat.cmd\`
+          ไม่ต้องติดตั้ง Python หรืออะไรเพิ่ม ใช้งานแบบออฟไลน์ได้
+
+          SHA-256: \`$SUM\`
+          ตรวจใน PowerShell: \`Get-FileHash SheetFlat-windows.zip\`
+          ตรวจว่าสร้างจาก repo นี้จริง: \`gh attestation verify SheetFlat-windows.zip --repo $GITHUB_REPOSITORY\`
+          EOF
+          gh release create "$TAG" dist/SheetFlat-windows.zip dist/SHA256SUMS.txt --title "SheetFlat $TAG" --notes-file notes.md

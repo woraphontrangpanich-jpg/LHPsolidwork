@@ -345,4 +345,5 @@ body.demo .topnav { display: flex; }
 .dl-more { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--zinc-200); color: var(--steel); font-size: 14px; display: grid; gap: 8px; }
 .dl-more b { color: var(--ink); font-weight: 600; }
 .dl-more a { color: var(--dim); }
+#dlHashVal { overflow-wrap: anywhere; user-select: all; }
 @media (max-width: 600px) { .navtab { padding: 0 8px; font-size: 13px; } .dlpage { padding: 28px 16px; } .dlpage h1 { font-size: 24px; } }

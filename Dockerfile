@@ -1,5 +1,5 @@
 # SheetFlat web app - cloud container (Cloudflare Containers / Render / Cloud Run / any Docker host)
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # OpenCASCADE (cadquery-ocp) needs a few system libraries even without a display
 RUN apt-get update \
@@ -8,7 +8,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 COPY sheetflat ./sheetflat
 COPY run.py ./

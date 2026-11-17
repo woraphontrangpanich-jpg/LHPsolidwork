@@ -10,13 +10,20 @@
 
 ## เริ่มใช้งาน
 
-**ลูกค้า/ผู้ใช้ทั่วไป: ดู [คู่มือติดตั้ง (INSTALL.md)](INSTALL.md)** มีคำสั่งเดียวสำหรับติดตั้ง ไม่ต้องใช้ git
+**ลูกค้า/ผู้ใช้ทั่วไป: ดู [คู่มือติดตั้ง (INSTALL.md)](INSTALL.md)** ดาวน์โหลด ZIP จากหน้า Releases แตกไฟล์ ดับเบิลคลิก `SheetFlat.cmd` ไม่ต้องติดตั้งอะไร
+
+นักพัฒนา (รันจากซอร์สโค้ด):
 
 ```
-start.bat            (ดับเบิลคลิก - ติดตั้งครั้งแรกอัตโนมัติ แล้วเปิดเบราว์เซอร์ที่ http://127.0.0.1:8765)
+start.bat            (สร้าง .venv และติดตั้งแพ็กเกจตาม requirements.txt ที่ล็อกเวอร์ชันและ hash ไว้)
+pip install -r requirements-dev.txt && python -m pytest
+python tools/build_portable.py --test     (สร้าง dist/SheetFlat-windows.zip แบบเดียวกับที่ปล่อยใน Releases)
 ```
 
-หรือใช้ `python run.py` ต้องใช้ Python 3.10 ขึ้นไป (ทดสอบกับ 3.14) โปรแกรมทำงานบนเครื่องของคุณเอง ไฟล์ไม่ถูกส่งออกอินเทอร์เน็ต
+ปล่อยเวอร์ชันใหม่: `git tag v1.0.0 && git push origin v1.0.0` GitHub Actions ([release.yml](.github/workflows/release.yml)) จะเทสต์ สร้าง ZIP ทดลองรัน ออก attestation แล้วแนบไฟล์ใน Release ให้เอง
+แก้เวอร์ชันแพ็กเกจที่ `requirements.in` แล้วสร้าง `requirements.txt` ใหม่ด้วยคำสั่งที่เขียนไว้ในหัวไฟล์
+
+ใช้ Python 3.14 (ตัว ZIP มี Python 3.14 แบบ embeddable ติดมาด้วย) โปรแกรมทำงานบนเครื่องของคุณเอง ไฟล์ไม่ถูกส่งออกอินเทอร์เน็ต
 ฟอนต์ IBM Plex Sans Thai โหลดจาก Google Fonts ถ้าเครื่องออฟไลน์จะใช้ Leelawadee UI / Tahoma แทน
 
 ### ขั้นตอนในหน้าเว็บ
@@ -151,7 +158,8 @@ BA = θ · (r_in + K · t)          θ เป็นเรเดียน, r_in =
 
 ```
 sheetflat/
-  run.py, start.bat, requirements.txt
+  run.py, start.bat, requirements.in -> requirements.txt (ล็อกพร้อม hash), requirements-dev.txt
+  tools/build_portable.py  สร้าง ZIP สำหรับ Windows (Python embeddable + แพ็กเกจ + โค้ด)
   sheetflat/
     app.py                 FastAPI (อัปโหลด, ประมวลผล, ส่งออก)
     core/
@@ -178,7 +186,7 @@ GitHub Pages เปิดได้แค่ไฟล์หน้าเว็บ 
 ที่แสดงผลจากงานตัวอย่าง `DemoCabinet` (ตู้เหล็กสังเคราะห์ 8 แบบ 27 ชิ้น) ซึ่งคำนวณด้วยโปรแกรมจริงไว้ล่วงหน้า
 กดดูใบสั่งตัด แบบคลี่ วัดระยะ และดาวน์โหลด DXF/Excel ของงานตัวอย่างได้ แต่ส่งไฟล์ของตัวเองเข้าไปคลี่ไม่ได้
 
-ใช้งานจริงกับไฟล์ของคุณ: ดาวน์โหลดโปรเจกต์นี้ (Code → Download ZIP) แตกไฟล์ แล้วดับเบิลคลิก `start.bat` (ต้องมี Python 3.10+)
+ใช้งานจริงกับไฟล์ของคุณ: แท็บ “ดาวน์โหลดโปรแกรม” บนหน้าเว็บ ลิงก์ไปที่ ZIP ล่าสุดใน Releases
 
 สร้างไฟล์ตัวอย่างใหม่หลังแก้โค้ด: `python tools/build_demo.py` (เขียนลงโฟลเดอร์ `docs/` ที่ Pages ใช้)
 

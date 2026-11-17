@@ -1,0 +1,11 @@
+# Packages SheetFlat needs at run time, pinned to the versions it was tested with.
+# requirements.txt is generated from this file with a hash for every download:
+#   uv pip compile requirements.in --universal --python-version 3.14 --generate-hashes -o requirements.txt
+cadquery-ocp==8.0.1.1.0
+ezdxf==1.4.5
+openpyxl==3.1.5
+fastapi==0.163.1
+uvicorn==0.54.0
+python-multipart==0.0.34
+numpy==2.5.5
+shapely==2.2.0

@@ -9,11 +9,11 @@ import traceback
 import zipfile
 from collections import OrderedDict
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .core.dxf_export import build_dxf, dxf_bytes
@@ -35,8 +35,13 @@ MAX_UPLOAD_MB = int(os.environ.get("SHEETFLAT_MAX_UPLOAD_MB", "100"))
 JOB_TTL = int(os.environ.get("SHEETFLAT_JOB_TTL", str(2 * 3600)))
 DATA = Path(os.environ.get("SHEETFLAT_DATA", str(ROOT.parent / "data")))
 WEB = ROOT / "web"
-DATA.mkdir(exist_ok=True)
+DATA.mkdir(parents=True, exist_ok=True)
 (DATA / "uploads").mkdir(exist_ok=True)
+# Local mode: only pages served by this program may talk to it. Blocks other web sites the user has
+# open from driving the local API (cross-site form posts, DNS rebinding). Extra names for LAN use:
+# SHEETFLAT_ALLOWED_HOSTS="192.168.1.20,shop-pc"
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"} | {
+    h.strip().lower() for h in os.environ.get("SHEETFLAT_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
 store = ProfileStore(DATA / "profiles.json")
 jobs: "OrderedDict[str, Project]" = OrderedDict()
@@ -61,6 +66,25 @@ class J(JSONResponse):
 
 
 app = FastAPI(title="SheetFlat", default_response_class=J)
+
+
+def _hostname(value: str | None) -> str:
+    try:
+        return (urlsplit(value if "//" in value else "//" + value).hostname or "").lower() if value else ""
+    except ValueError:
+        return ""
+
+
+@app.middleware("http")
+async def local_only(request, call_next):
+    if not CLOUD:
+        if _hostname(request.headers.get("host")) not in LOCAL_HOSTS:
+            return PlainTextResponse("SheetFlat: host not allowed", status_code=403)
+        origin = request.headers.get("origin")
+        if origin is not None and request.method not in ("GET", "HEAD", "OPTIONS") \
+                and _hostname(origin) not in LOCAL_HOSTS:
+            return PlainTextResponse("SheetFlat: request from another site blocked", status_code=403)
+    return await call_next(request)
 
 
 def _expire_jobs():

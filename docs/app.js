@@ -224,11 +224,30 @@ function route() {
     $("#landing").hidden = true; $("#busy").hidden = true; $("#bench").hidden = true;
     $("#topJob").hidden = true; $("#topActions").hidden = true;
     window.scrollTo(0, 0);
+    releaseInfo();
   } else if (S.project) {
     enterBench();
   } else {
     $("#landing").hidden = false;
   }
+}
+/* version, size and SHA-256 of the latest release, straight from GitHub (page works without it) */
+let releaseLoaded = false;
+async function releaseInfo() {
+  if (releaseLoaded) return;
+  releaseLoaded = true;
+  try {
+    const r = await fetch("https://api.github.com/repos/woraphontrangpanich-jpg/LHPsolidwork/releases/latest");
+    if (!r.ok) return;
+    const rel = await r.json();
+    const a = (rel.assets || []).find((x) => x.name === "SheetFlat-windows.zip");
+    if (!a) return;
+    $("#dlMeta").textContent = `SheetFlat-windows.zip · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
+    if (a.digest && a.digest.startsWith("sha256:")) {
+      $("#dlHashVal").textContent = a.digest.slice(7).toUpperCase();
+      $("#dlHash").hidden = false;
+    }
+  } catch (e) { /* offline or rate-limited: keep the static text */ }
 }
 function selectOverview() { S.sel = { kind: "overview" }; renderRail(); renderInspector(); loadScene(); }
 function selectGroup(id) { S.sel = { kind: "group", id }; S.sheetIdx = 0; renderRail(); renderInspector(); loadScene(); }
