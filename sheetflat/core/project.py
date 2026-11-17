@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {
     "gap": 10.0,
     "max_width": 2500.0,
     "sheet": None,                # [w, l] raw sheet size or None
-    "bend_lines": True,
+    "bend_lines": False,          # the shop's own DXF files have cut lines only
     "labels": False,
     "filename": "{job}_{code}_{t}mm",
 }
@@ -150,6 +150,7 @@ class Project:
         t = rec.thickness_used(prof)
         model = bend_model(prof, t)
         key = (prof["id"], t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_ratio, model.jog_use_k,
+               model.simplify_bends,
                tuple(tuple((r["thickness"], r["bd"]) for r in prof["table"])))
         if rec.flat_key == key and (rec.pieces or rec.unfold_error):
             return

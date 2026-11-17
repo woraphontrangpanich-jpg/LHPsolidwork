@@ -803,7 +803,8 @@ function renderProfileDialog() {
       <label>มุมที่ถือว่าเป็น 90° (± องศา)<input type="number" step="0.1" id="pfAng" value="${p.angle_tol}"></label>
       <label>ใช้ตารางได้เมื่อ R ใน ≤ (× ความหนา)<input type="number" step="0.5" id="pfRat" value="${p.table_max_ratio}"></label>
       <label>จับคู่ความหนากับตารางได้ ± (มม.)<input type="number" step="0.01" id="pfMatch" value="${p.match_tol}"></label>
-      <label class="switch" style="align-self:end"><input type="checkbox" id="pfJog" ${p.jog_use_k ? "checked" : ""}> รอยพับสลับทิศติดกัน (jog) ใช้ K-factor</label></div></details>
+      <label class="switch" style="align-self:end"><input type="checkbox" id="pfJog" ${p.jog_use_k ? "checked" : ""}> รอยพับสลับทิศติดกัน (jog) ใช้ K-factor</label>
+      <label class="switch" style="grid-column:1/3"><input type="checkbox" id="pfSimp" ${p.simplify_bends !== false ? "checked" : ""}> เส้นตัดโค้งที่พาดผ่านรอยพับ ทำเป็นเส้นตรง (เหมือน Simplify bends ของ SolidWorks)</label></div></details>
     <details style="margin-top:12px"><summary>ชนิดเหล็ก</summary><table class="pt"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>คำนำหน้าชื่อไฟล์</th></tr></thead><tbody>
       ${d.materials.map((m, i) => `<tr><td><input type="text" data-m="${i}" data-f="id" value="${esc(m.id)}"></td><td><input type="text" data-m="${i}" data-f="name" value="${esc(m.name)}"></td><td><input type="text" data-m="${i}" data-f="prefix" value="${esc(m.prefix)}"></td></tr>`).join("")}
     </tbody></table></details>`;
@@ -818,7 +819,7 @@ function syncProfile() {
   const d = editing, p = d.profiles.find((x) => x.id === d.cur); if (!p) return;
   p.name = $("#pfName").value.trim() || p.name; p.k_factor = +$("#pfK").value || 0.5;
   $("#pfRows").querySelectorAll("input").forEach((i) => { const r = p.table[+i.dataset.r]; r[i.dataset.f] = i.dataset.f === "gauge" ? i.value.trim() : +i.value; });
-  p.angle_tol = +$("#pfAng").value || 1; p.table_max_ratio = +$("#pfRat").value || 3; p.match_tol = +$("#pfMatch").value || 0.06; p.jog_use_k = $("#pfJog").checked;
+  p.angle_tol = +$("#pfAng").value || 1; p.table_max_ratio = +$("#pfRat").value || 3; p.match_tol = +$("#pfMatch").value || 0.06; p.jog_use_k = $("#pfJog").checked; p.simplify_bends = $("#pfSimp").checked;
   $("#profileBody").querySelectorAll("[data-m]").forEach((i) => { d.materials[+i.dataset.m][i.dataset.f] = i.value.trim(); });
 }
 async function saveProfiles(ev) {

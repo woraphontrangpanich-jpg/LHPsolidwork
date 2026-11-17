@@ -32,6 +32,7 @@ class BendModel:
     table_max_ratio: float = 3.0          # r_in/t above this -> treated as a curved bend (K-factor)
     jog_use_k: bool = True                # two opposite bends separated by a very short flat (jog/step) -> K-factor
     jog_max_flat_ratio: float = 2.0       # "very short flat" = distance between tangent lines <= ratio * t
+    simplify_bends: bool = True           # like SolidWorks "Simplify bends": curved cut edges inside a bend zone -> straight line
 
     def allowance(self, theta: float, r_in: float, force_k: bool = False):
         """Return (ba, method, bd, k) for a bend of angle ``theta`` (rad) and inner radius ``r_in``."""

@@ -245,9 +245,21 @@ def _unfold_piece(sd: SolidData, fs: set, model: BendModel) -> FlatPiece:
                 continue      # internal tangent edge between two skin faces
             if not others and len(e.face_ids) >= 1 and e.face_ids.count(fid) >= 1 and len(set(e.face_ids)) == 1:
                 continue      # seam edge of a periodic face
-            prims.extend(_map_edge(e, f, ch))
+            got = _map_edge(e, f, ch)
+            if ch.kind == "cyl" and got and got[0]["t"] == "poly":
+                if model.simplify_bends and not e.closed:
+                    # SolidWorks default ("Simplify bends"): a cut edge inside a bend zone becomes a straight line
+                    pts = got[0]["pts"]
+                    got = [{"t": "line", "a": pts[0], "b": pts[-1]}]
+                else:
+                    mid = _neutral_curve(sd, e, f, ch, fs, model.thickness)
+                    if mid is not None:
+                        got = [{"t": "poly", "pts": mid}]
+            prims.extend(got)
 
     prims = _merge_arcs(prims)
+    prims = _remove_slits(prims)
+    prims = _merge_continuous(prims)
 
     # ---- bend lines (centre line + tangent lines) in flat coordinates
     for fid, ch in charts.items():
@@ -381,6 +393,164 @@ def _map_edge(e: Edge, f: Face, ch) -> list[dict]:
         if np.linalg.norm(d - float(d @ ax) * ax) < 1e-4 and not e.closed:
             return [{"t": "line", "a": tuple(ch.map(e.p0)), "b": tuple(ch.map(e.p1))}]
     return [{"t": "poly", "pts": [tuple(ch.map(P)) for P in e.pts]}]
+
+
+def _neutral_curve(sd, e: Edge, f: Face, ch, fs: set, t: float):
+    """A cut edge that crosses a bend obliquely is a different curve on the outer and on the inner skin.
+    The flat pattern needs the cut at the neutral (mid-thickness) surface, like SolidWorks:
+    map the matching edge of the other skin with the same chart and average the two curves."""
+    side = [x for x in e.face_ids if x != f.id and x not in fs]
+    if not side:
+        return None
+    best = None
+    for eid in set(sd.faces[side[0]].edge_ids):
+        if eid == e.id:
+            continue
+        e2 = sd.edges[eid]
+        for gid in e2.face_ids:
+            g = sd.faces[gid]
+            if gid == side[0] or g.kind != "cylinder":
+                continue
+            if abs(abs(float(g.axis_dir @ f.axis_dir)) - 1.0) > 1e-6:
+                continue
+            d = g.axis_pt - f.axis_pt
+            if np.linalg.norm(d - float(d @ f.axis_dir) * f.axis_dir) > 1e-4 or abs(abs(g.radius - f.radius) - t) > 0.02 * t + 1e-4:
+                continue
+            best = e2
+    if best is None:
+        return None
+    A = np.array([ch.map(P) for P in e.pts])
+    B = np.array([ch.map(P) for P in best.pts])
+    if np.linalg.norm(A[0] - B[0]) + np.linalg.norm(A[-1] - B[-1]) > np.linalg.norm(A[0] - B[-1]) + np.linalg.norm(A[-1] - B[0]):
+        B = B[::-1]
+    if np.linalg.norm(A[0] - B[0]) > 2 * t + 0.5 or np.linalg.norm(A[-1] - B[-1]) > 2 * t + 0.5:
+        return None
+
+    def resample(P, n):
+        seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(seg)])
+        if s[-1] <= 0:
+            return np.repeat(P[:1], n, axis=0)
+        u = np.linspace(0.0, s[-1], n)
+        return np.column_stack([np.interp(u, s, P[:, 0]), np.interp(u, s, P[:, 1])])
+    n = max(len(A), len(B), 16)
+    M = 0.5 * (resample(A, n) + resample(B, n))
+    # keep the exact end points of the outer-skin edge so the contour stays closed with its neighbours
+    M[0], M[-1] = A[0], A[-1]
+    return [tuple(p) for p in M]
+
+
+def _remove_slits(prims: list[dict], tol: float = 1e-4) -> list[dict]:
+    """Zero-width slits: where the model has two faces touching (e.g. a hem that stops next to a corner tab),
+    the flat contour contains the same line twice, once from each side. SolidWorks does not cut these,
+    so remove the overlapping part of both lines."""
+    lines = [i for i, p in enumerate(prims) if p["t"] == "line"]
+    pieces = {i: [(0.0, 1.0)] for i in lines}
+    for ii, i in enumerate(lines):
+        a, b = np.array(prims[i]["a"], float), np.array(prims[i]["b"], float)
+        L = np.linalg.norm(b - a)
+        if L < 1e-9:
+            continue
+        u = (b - a) / L
+        for j in lines[ii + 1:]:
+            c, d = np.array(prims[j]["a"], float), np.array(prims[j]["b"], float)
+            Lj = np.linalg.norm(d - c)
+            if Lj < 1e-9:
+                continue
+            cr = lambda p: abs((p - a)[0] * u[1] - (p - a)[1] * u[0])
+            if cr(c) > tol or cr(d) > tol:
+                continue
+            s1, s2 = sorted(((c - a) @ u, (d - a) @ u))
+            lo, hi = max(0.0, s1), min(L, s2)
+            if hi - lo <= tol:
+                continue
+            # cut [lo,hi] out of line i (param along i) and the same stretch out of line j
+            pieces[i] = _cut(pieces[i], lo / L, hi / L)
+            v = (d - c) / Lj
+            t1, t2 = sorted((((a + lo * u) - c) @ v / Lj, ((a + hi * u) - c) @ v / Lj))
+            pieces[j] = _cut(pieces[j], t1, t2)
+    out = []
+    for i, p in enumerate(prims):
+        if i not in pieces or pieces[i] == [(0.0, 1.0)]:
+            out.append(p)
+            continue
+        a, b = np.array(p["a"], float), np.array(p["b"], float)
+        for t0, t1 in pieces[i]:
+            if (t1 - t0) * np.linalg.norm(b - a) > tol:
+                q = dict(p)
+                q["a"], q["b"] = tuple(a + t0 * (b - a)), tuple(a + t1 * (b - a))
+                out.append(q)
+    return out
+
+
+def _merge_continuous(prims: list[dict], tol: float = 1e-4) -> list[dict]:
+    """Join a straight edge that the 3D model split into several faces back into one LINE
+    (and touching arcs on the same circle into one ARC), like SolidWorks does in its flat pattern DXF."""
+    def key(p):
+        return (round(p[0] / tol), round(p[1] / tol))
+
+    changed = True
+    while changed:
+        changed = False
+        ends: dict = {}
+        for i, p in enumerate(prims):
+            if p["t"] == "circle":
+                continue
+            a, b = prim_ends(p)
+            ends.setdefault(key(a), []).append(i)
+            ends.setdefault(key(b), []).append(i)
+        for k, ids in ends.items():
+            if len(ids) != 2 or ids[0] == ids[1]:
+                continue
+            i, j = ids
+            p, q = prims[i], prims[j]
+            if p["t"] == "line" and q["t"] == "line":
+                pa, pb, qa, qb = (np.array(x, float) for x in (p["a"], p["b"], q["a"], q["b"]))
+                # orient: p ends where q starts
+                if key(pa) == k:
+                    pa, pb = pb, pa
+                if key(qb) == k:
+                    qa, qb = qb, qa
+                u, v = pb - pa, qb - qa
+                nu, nv = np.linalg.norm(u), np.linalg.norm(v)
+                if nu < 1e-12 or nv < 1e-12:
+                    continue
+                if abs(u[0] * v[1] - u[1] * v[0]) / (nu * nv) > 1e-7 or float(u @ v) <= 0:
+                    continue
+                new = dict(p)
+                new["a"], new["b"] = tuple(pa), tuple(qb)
+            elif p["t"] == "arc" and q["t"] == "arc":
+                if abs(p["r"] - q["r"]) > tol or np.linalg.norm(np.subtract(p["c"], q["c"])) > tol:
+                    continue
+                if abs(((p["a1"] - q["a0"] + 180) % 360) - 180) < 1e-4:
+                    a0, a1 = p["a0"], q["a1"]
+                elif abs(((q["a1"] - p["a0"] + 180) % 360) - 180) < 1e-4:
+                    a0, a1 = q["a0"], p["a1"]
+                else:
+                    continue
+                if abs(((a1 - a0 + 180) % 360) - 180) < 1e-6:
+                    continue      # would close into a full circle: _merge_arcs handles that
+                new = dict(p)
+                new["a0"], new["a1"] = a0 % 360.0, a1 % 360.0
+            else:
+                continue
+            prims = [x for n, x in enumerate(prims) if n not in (i, j)] + [new]
+            changed = True
+            break
+    return prims
+
+
+def _cut(intervals, lo, hi):
+    res = []
+    for a, b in intervals:
+        if hi <= a or lo >= b:
+            res.append((a, b))
+            continue
+        if lo > a:
+            res.append((a, lo))
+        if hi < b:
+            res.append((hi, b))
+    return res
 
 
 def _merge_arcs(prims: list[dict]) -> list[dict]:

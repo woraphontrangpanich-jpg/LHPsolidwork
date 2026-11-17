@@ -45,6 +45,7 @@ DEFAULT_PROFILE = {
     "table_max_ratio": 3.0,    # r_in / t above this -> curved bend -> K-factor
     "jog_use_k": True,         # opposite bends with a very short flat between them (jog) -> K-factor
     "match_tol": 0.06,         # mm: measured thickness within this of a table row -> that row
+    "simplify_bends": True,    # curved cut edges inside bend zones -> straight lines (SolidWorks default)
     "table": DEFAULT_TABLE,
 }
 
@@ -125,6 +126,7 @@ def _validate_profile(p: dict):
     p["table_max_ratio"] = float(p.get("table_max_ratio", 3.0))
     p["jog_use_k"] = bool(p.get("jog_use_k", True))
     p["match_tol"] = float(p.get("match_tol", 0.06))
+    p["simplify_bends"] = bool(p.get("simplify_bends", True))
     rows = []
     for r in p.get("table", []):
         rows.append({"gauge": str(r.get("gauge", "")), "thickness": float(r["thickness"]), "bd": float(r["bd"])})
@@ -161,4 +163,5 @@ def bend_model(profile: dict, thickness: float, k_override: float | None = None)
         angle_tol_deg=profile.get("angle_tol", 1.0),
         table_max_ratio=profile.get("table_max_ratio", 3.0),
         jog_use_k=profile.get("jog_use_k", True),
+        simplify_bends=profile.get("simplify_bends", True),
     )
