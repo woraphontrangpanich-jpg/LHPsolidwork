@@ -23,8 +23,17 @@ from .core.step_reader import StepReadError
 from .core.sw_convert import SolidWorksUnavailable, convert_to_step, solidworks_available
 from .core.xlsx_export import build_xlsx
 
+import os
+import time
+
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT.parent / "data"
+# CLOUD mode (set SHEETFLAT_CLOUD=1 in the container): the server is reachable by other people, so
+# - opening files by path on the server is disabled
+# - uploaded files are deleted as soon as they are read, jobs expire after JOB_TTL seconds
+CLOUD = os.environ.get("SHEETFLAT_CLOUD", "") not in ("", "0", "false")
+MAX_UPLOAD_MB = int(os.environ.get("SHEETFLAT_MAX_UPLOAD_MB", "100"))
+JOB_TTL = int(os.environ.get("SHEETFLAT_JOB_TTL", str(2 * 3600)))
+DATA = Path(os.environ.get("SHEETFLAT_DATA", str(ROOT.parent / "data")))
 WEB = ROOT / "web"
 DATA.mkdir(exist_ok=True)
 (DATA / "uploads").mkdir(exist_ok=True)
@@ -54,7 +63,14 @@ class J(JSONResponse):
 app = FastAPI(title="SheetFlat", default_response_class=J)
 
 
+def _expire_jobs():
+    now = time.time()
+    for jid in [j for j, p in jobs.items() if now - p.created > JOB_TTL]:
+        jobs.pop(jid, None)
+
+
 def get_job(jid: str) -> Project:
+    _expire_jobs()
     pr = jobs.get(jid)
     if pr is None:
         raise HTTPException(404, "ไม่พบงานนี้ (อาจถูกล้างออกจากหน่วยความจำแล้ว) กรุณาอัปโหลดใหม่")
@@ -72,6 +88,8 @@ def _run(pr: Project, path: Path, tmpdir: Path | None):
             pr.load_step(str(step))
         else:
             pr.load_step(str(path))
+        if CLOUD and tmpdir is not None:
+            shutil.rmtree(tmpdir, ignore_errors=True)       # do not keep customer files on the server
     except (StepReadError, SolidWorksUnavailable) as ex:
         pr.error = str(ex)
         pr.progress.update(state="error", msg=str(ex))
@@ -79,16 +97,20 @@ def _run(pr: Project, path: Path, tmpdir: Path | None):
         traceback.print_exc()
         pr.error = f"{type(ex).__name__}: {ex}"
         pr.progress.update(state="error", msg=pr.error)
+    finally:
+        if CLOUD and tmpdir is not None:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _start(path: Path, source_name: str, material: str, profile: str | None) -> Project:
+def _start(path: Path, source_name: str, material: str, profile: str | None, tmpdir: Path | None = None) -> Project:
     pr = Project(store, Path(source_name).stem, source_name,
                  {"material": material, "profile": profile or store.data["active"]})
+    _expire_jobs()
     jobs[pr.id] = pr
     while len(jobs) > MAX_JOBS:
         old_id, _ = jobs.popitem(last=False)
         shutil.rmtree(DATA / "uploads" / old_id, ignore_errors=True)
-    threading.Thread(target=_run, args=(pr, path, None), daemon=True).start()
+    threading.Thread(target=_run, args=(pr, path, tmpdir), daemon=True).start()
     return pr
 
 
@@ -106,16 +128,24 @@ async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profi
     tmp = DATA / "uploads" / ("u" + uuid.uuid4().hex[:10])
     tmp.mkdir(parents=True, exist_ok=True)
     path = tmp / name
+    size = 0
     with open(path, "wb") as fh:
         while chunk := await file.read(1 << 20):
+            size += len(chunk)
+            if size > MAX_UPLOAD_MB * 1024 * 1024:
+                fh.close()
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise HTTPException(413, f"ไฟล์ใหญ่เกิน {MAX_UPLOAD_MB} MB")
             fh.write(chunk)
-    pr = _start(path, name, material, profile)
+    pr = _start(path, name, material, profile, tmpdir=tmp)
     return {"id": pr.id}
 
 
 @app.post("/api/open-path")
 async def open_path(body: dict):
     """Open a file that is already on this PC (the server runs locally) - no upload needed."""
+    if CLOUD:
+        raise HTTPException(403, "เวอร์ชันออนไลน์เปิดไฟล์ด้วยพาธไม่ได้ กรุณาอัปโหลดไฟล์")
     p = Path(str(body.get("path", "")).strip().strip('"'))
     if not p.is_file():
         raise HTTPException(400, "ไม่พบไฟล์ตามพาธที่ระบุ")
@@ -240,7 +270,12 @@ def export_all(jid: str):
 
 @app.get("/api/info")
 def info():
-    return {"solidworks": solidworks_available()}
+    return {"solidworks": solidworks_available(), "cloud": CLOUD, "max_upload_mb": MAX_UPLOAD_MB}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ static

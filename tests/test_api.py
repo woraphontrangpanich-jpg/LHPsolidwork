@@ -102,3 +102,23 @@ def test_upload_multipart_and_sldasm_message(client):
     assert bad.status_code == 400 and "STEP" in bad.json()["detail"]
     junk = client.post("/api/upload", files={"file": ("x.txt", b"hello")})
     assert junk.status_code == 400
+
+
+def test_cloud_mode_hardening(client, monkeypatch):
+    import sheetflat.app as A
+    monkeypatch.setattr(A, "CLOUD", True)
+    assert client.post("/api/open-path", json={"path": str(SAMPLE)}).status_code == 403
+    assert client.get("/api/info").json()["cloud"] is True
+    before = {p for p in (A.DATA / "uploads").rglob("*") if p.is_file()}
+    with open(SAMPLE, "rb") as fh:
+        jid = client.post("/api/upload", files={"file": ("Assem.STEP", fh)}).json()["id"]
+    for _ in range(100):
+        if client.get(f"/api/jobs/{jid}").json()["state"] in ("done", "error"):
+            break
+        time.sleep(0.3)
+    # the uploaded customer file must be gone from the server
+    left = [p for p in (A.DATA / "uploads").rglob("*") if p.is_file() and p not in before]
+    assert left == []
+    monkeypatch.setattr(A, "MAX_UPLOAD_MB", 0)
+    with open(SAMPLE, "rb") as fh:
+        assert client.post("/api/upload", files={"file": ("Assem.STEP", fh)}).status_code == 413

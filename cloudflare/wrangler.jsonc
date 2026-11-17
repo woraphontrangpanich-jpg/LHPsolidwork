@@ -1,0 +1,20 @@
+{
+  // Deploy:  cd cloudflare && npm install && npx wrangler deploy   (needs Docker running, or use the GitHub Action)
+  "name": "sheetflat",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "containers": [
+    {
+      "class_name": "SheetFlat",
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "SHEETFLAT", "class_name": "SheetFlat" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SheetFlat"] }],
+  "observability": { "enabled": true }
+}

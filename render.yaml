@@ -1,0 +1,13 @@
+# One-click deploy on Render: https://render.com/deploy?repo=https://github.com/woraphontrangpanich-jpg/LHPsolidwork
+services:
+  - type: web
+    name: sheetflat
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: SHEETFLAT_CLOUD
+        value: "1"
+      - key: SHEETFLAT_MAX_UPLOAD_MB
+        value: "100"

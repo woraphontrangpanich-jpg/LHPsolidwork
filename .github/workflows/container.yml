@@ -1,0 +1,40 @@
+name: Build and test the cloud container
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t sheetflat .
+      - name: Start container
+        run: |
+          docker run -d --name sf -p 8080:8080 sheetflat
+          for i in $(seq 1 60); do curl -sf http://localhost:8080/healthz && break; sleep 2; done
+          curl -sf http://localhost:8080/api/info
+      - name: Upload the demo assembly and check the result
+        run: |
+          ID=$(curl -sf -F "file=@docs/demo/DemoCabinet.step" -F material=ZN http://localhost:8080/api/upload | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          for i in $(seq 1 60); do
+            STATE=$(curl -sf http://localhost:8080/api/jobs/$ID | python3 -c "import sys,json;print(json.load(sys.stdin)['state'])")
+            [ "$STATE" = "done" ] || [ "$STATE" = "error" ] && break; sleep 2
+          done
+          curl -sf http://localhost:8080/api/jobs/$ID > job.json
+          python3 - <<'PY'
+          import json
+          j = json.load(open("job.json"))
+          assert j["state"] == "done", j
+          g = {x["code"]: x["pieces"] for x in j["project"]["groups"]}
+          print("groups", g)
+          assert g == {"ZN#22": 6, "ZN#19": 4, "ZN#14": 5}, g
+          PY
+          curl -sf -o all.zip http://localhost:8080/api/jobs/$ID/export/all && ls -l all.zip
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"path":"/etc/passwd"}' http://localhost:8080/api/open-path)" = "403"
+      - name: Container logs
+        if: always()
+        run: docker logs sf | tail -50

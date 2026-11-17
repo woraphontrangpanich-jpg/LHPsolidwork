@@ -840,5 +840,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     const go = document.getElementById("demoGo");
     if (go) go.addEventListener("click", async () => { showBusy("กำลังเปิดงานตัวอย่าง"); try { await pollJob("demo"); } catch (e) { backToLanding(e.message); } });
   }
+  if (!DEMO) {
+    try {
+      const info = await (await fetch("/api/info")).json();
+      if (info.cloud) { document.querySelector(".pathbox").hidden = true; document.body.classList.add("cloud"); }
+    } catch (_) { /* ignore */ }
+  }
   try { await initLanding(); } catch (e) { landError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message); }
 });

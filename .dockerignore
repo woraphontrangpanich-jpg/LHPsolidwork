@@ -1,0 +1,10 @@
+.venv
+.git
+data
+docs
+tests
+tools
+.pytest_tmp
+__pycache__
+*.pyc
+cloudflare/node_modules

@@ -179,3 +179,19 @@ GitHub Pages เปิดได้แค่ไฟล์หน้าเว็บ 
 ใช้งานจริงกับไฟล์ของคุณ: ดาวน์โหลดโปรเจกต์นี้ (Code → Download ZIP) แตกไฟล์ แล้วดับเบิลคลิก `start.bat` (ต้องมี Python 3.10+)
 
 สร้างไฟล์ตัวอย่างใหม่หลังแก้โค้ด: `python tools/build_demo.py` (เขียนลงโฟลเดอร์ `docs/` ที่ Pages ใช้)
+
+## ใช้งานออนไลน์ได้จริง (deploy ขึ้นคลาวด์)
+
+GitHub Pages รันโปรแกรมคลี่แผ่นไม่ได้ ถ้าอยากให้คนอื่นอัปโหลดไฟล์ผ่านลิงก์ได้เลย ต้องรันโปรแกรมเป็น container บนคลาวด์ โปรเจกต์นี้เตรียมไว้แล้ว (`Dockerfile`)
+และทุกครั้งที่ push จะมี GitHub Action สร้าง container แล้วลองอัปโหลดงานตัวอย่างจริงเพื่อตรวจว่าใช้งานได้
+
+เมื่อรันบนคลาวด์ (`SHEETFLAT_CLOUD=1`) โปรแกรมจะ ปิดการเปิดไฟล์ด้วยพาธ ลบไฟล์ที่อัปโหลดทันทีหลังอ่านเสร็จ งานหมดอายุใน 2 ชั่วโมง และจำกัดไฟล์ไม่เกิน 100 MB
+ข้อควรรู้: ไฟล์ลูกค้าจะถูกส่งขึ้นเซิร์ฟเวอร์ภายนอก, ตารางค่ายืดที่แก้บนเว็บใช้ร่วมกันทุกคนและหายเมื่อ container รีสตาร์ต (แก้ค่าเริ่มต้นถาวรที่ `sheetflat/core/profiles.py`)
+
+| ที่ไหน | ค่าใช้จ่าย | วิธี |
+|---|---|---|
+| **Render** (ง่ายสุด) | ฟรี (หลับเมื่อไม่มีคนใช้ 15 นาที เปิดครั้งแรกรอ ~1 นาที, RAM 512 MB) | กด https://render.com/deploy?repo=https://github.com/woraphontrangpanich-jpg/LHPsolidwork แล้วล็อกอินด้วย GitHub ระบบอ่าน `render.yaml` เอง |
+| **Cloudflare Containers** | ต้องมี Workers Paid $5/เดือน (มีโควตา CPU/RAM รวมให้) | สร้าง API token ใน Cloudflare ใส่ repo secrets `CLOUDFLARE_API_TOKEN` และ `CLOUDFLARE_ACCOUNT_ID` แล้วรัน Action “Deploy to Cloudflare Containers” (ไฟล์ตั้งค่าใน `cloudflare/`) |
+| **Google Cloud Run** | มีโควตาฟรีรายเดือน ต้องผูกบัตร | `gcloud run deploy sheetflat --source . --memory 1Gi --max-instances 1` |
+
+โปรแกรมเก็บงานไว้ในหน่วยความจำ จึงต้องตั้งให้รันแค่ 1 instance
