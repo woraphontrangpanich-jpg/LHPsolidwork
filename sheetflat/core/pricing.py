@@ -8,12 +8,15 @@ Per flat piece (x, y = flat size, t = thickness, qty), same formulas as the work
     T  arrangement 1 = floor(W / (x + m)) * floor(L / (y + m))
     W  arrangement 2 = floor(W / (y + m)) * floor(L / (x + m))                  (part turned 90 deg)
     H  metal        = ROUNDUP(G / MAX(T, W))                                    per piece
-    I  paint        = ROUNDUP(x * y * paint_per_mm2)                            per piece, not for unpainted steel
+    I  paint        = ROUNDUP(x * y * paint_per_mm2)                            per piece, only parts ticked "paint";
+                                                                                full flat rectangle, holes not deducted
+                                                                                (also shown: by the real outline, holes
+                                                                                not deducted either)
     L  weight       = kg_plate/(1220*2440) * x * y * qty
        sheet use    = pieces on the sheet * x * y / (W * L)                     (rest = offcut)
-    J  plating      = L * plating_per_kg                                        shown; in the total only when switched on
+    J  plating      = L * plating_per_kg                                        only parts ticked "plate"
        extras       = user cost items per piece / bend / hole / kg / m2         (per job: added once)
-    M  total        = (H + I + extras) * qty  [+ J]
+    M  total        = (H + I + extras) * qty + J
 
 m = clamp/spacing margin. The workbook picks the sheet with a fixed rule; here every enabled sheet size
 and both arrangements are tried and the lowest metal cost per piece wins (ties -> the bigger sheet).
@@ -74,13 +77,29 @@ def extra_amount(e: dict, bends: int, holes: int, weight1: float, x: float, y: f
     return e["rate"] * n
 
 
+def polygon_area(pts) -> float:
+    a = 0.0
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+        a += x0 * y1 - x1 * y0
+    return abs(a) / 2.0
+
+
+def outline_area(piece) -> float:
+    """Area inside the outer outline of a flat piece; holes are NOT deducted."""
+    return sum(polygon_area([tuple(q) for q in lp["pts"]]) for lp in piece.loops if lp["role"] == "outer")
+
+
 def price_piece(pricing: dict, material: str, t: float, x: float, y: float, qty: int, bends: int,
-                holes: int = 0) -> dict:
+                holes: int = 0, paint: bool | None = None, plate: bool = False, area_real: float | None = None) -> dict:
     """Price one flat piece. Returns every number the price sheet shows."""
-    x, y = float(x), float(y)
+    x, y = round(float(x), 2), round(float(y), 2)          # the sizes as written in the price sheet
+    if paint is None:
+        paint = material not in pricing.get("no_paint", [])
+    area_real = round(float(area_real), 0) if area_real else x * y   # written as m2 with 6 decimals in the sheet
     row = price_row(pricing, material, t)
     out = {"material": material, "t": t, "x": round(x, 2), "y": round(y, 2), "qty": qty, "bends": bends,
-           "holes": holes, "options": [], "sheet": None, "error": "", "extras": []}
+           "holes": holes, "options": [], "sheet": None, "error": "", "extras": [], "paint_on": bool(paint),
+           "plate_on": bool(plate), "area_rect": round(x * y, 2), "area_real": round(area_real, 2)}
     if row is None:
         out["error"] = f"ไม่มีราคาเหล็ก {material} หนา {t:g} มม. ในตารางราคา"
         return _zero(out)
@@ -106,19 +125,22 @@ def price_piece(pricing: dict, material: str, t: float, x: float, y: float, qty:
     out["sheets_used"] = round(qty / b["count"], 4)                # fraction of sheets this part needs
     weight1 = kg_per_mm2(row) * x * y
     out["metal"] = b["metal"]
-    out["paint"] = 0 if material in pricing["no_paint"] else roundup(x * y * pricing["paint_per_m2"] * 1e-6)
+    rate = pricing["paint_per_m2"] * 1e-6
+    out["paint"] = roundup(x * y * rate) if paint else 0                    # flat rectangle (used in the price)
+    out["paint_real"] = roundup(area_real * rate) if paint else 0           # real outline (for reference)
     out["extras"] = [round(extra_amount(e, bends, holes, weight1, x, y), 4) for e in pricing["extras"]]
     out["extra"] = round(sum(out["extras"]), 4)
     out["weight"] = round(weight1 * qty, 4)
-    out["plating"] = round(weight1 * qty * pricing["plating_per_kg"], 4)
+    out["plating"] = round(weight1 * qty * pricing["plating_per_kg"], 4) if plate else 0
+    out["plating_real"] = round(kg_per_mm2(row) * area_real * qty * pricing["plating_per_kg"], 4) if plate else 0
     unit = out["metal"] + out["paint"] + out["extra"]
     out["unit"] = round(unit, 4)
-    out["total"] = round(unit * qty + (out["plating"] if pricing["include_plating"] else 0), 4)
+    out["total"] = round(unit * qty + out["plating"], 4)
     return out
 
 
 def _zero(out):
-    out.update(metal=0, paint=0, extra=0, plating=0, weight=0, unit=0, total=0)
+    out.update(metal=0, paint=0, paint_real=0, extra=0, plating=0, plating_real=0, weight=0, unit=0, total=0)
     return out
 
 
@@ -133,7 +155,8 @@ def price_project(pr, pricing: dict) -> dict:
             for k, pc in enumerate(rec.pieces):
                 w, h = pc.bbox[2] - pc.bbox[0], pc.bbox[3] - pc.bbox[1]
                 holes = sum(1 for lp in pc.loops if lp["role"] == "hole")
-                r = price_piece(pricing, g.material_id, g.thickness, max(w, h), min(w, h), rec.qty, len(pc.bends), holes)
+                r = price_piece(pricing, g.material_id, g.thickness, max(w, h), min(w, h), rec.qty, len(pc.bends), holes,
+                                paint=pr.paints(rec), plate=rec.plate, area_real=outline_area(pc))
                 r.update(part_id=rec.id, name=rec.name if len(rec.pieces) == 1 else f"{rec.name}-{k + 1}",
                          group=g.id, code=g.code, group_name=g.name)
                 grows.append(r)

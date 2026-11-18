@@ -29,6 +29,7 @@ DEFAULT_SETTINGS = {
     "bend_lines": False,          # the shop's own DXF files have cut lines only
     "labels": False,
     "filename": "{job}_{code}_{t}mm",
+    "sets": 1,                    # how many assemblies are made: every quantity is multiplied by this
 }
 
 
@@ -56,6 +57,10 @@ class PartRecord:
     t_override: float | None = None
     flip: bool = False
     category: str = ""                    # user group for parts that are not cut (e.g. "ซื้อสำเร็จรูป")
+    qty_asm: int = 0                      # quantity found in the assembly
+    qty_override: int | None = None       # quantity typed by the user (per set)
+    paint: bool | None = None             # None = automatic (painted unless the steel is in "no paint")
+    plate: bool = False                   # plated (ชุบ)
     # computed
     pieces: list[FlatPiece] = field(default_factory=list)
     unfold_error: str = ""
@@ -133,7 +138,7 @@ class Project:
     def _analyze_part(self, pid, name, qty, solid, kw) -> PartRecord:
         sd = extract_solid(solid)
         rec = PartRecord(id=pid, name=name, qty=qty, sd=sd, analysis=None, measured_t=0.0,
-                         material_id=self.settings["material"])
+                         material_id=self.settings["material"], qty_asm=qty)
         rec.bbox3 = tuple(float(x) for x in (sd.bbox[1] - sd.bbox[0]))
         try:
             an = analyze(sd)
@@ -221,8 +226,17 @@ class Project:
         if min(wmax, hmax) > 0 and max(wmax, hmax) / min(wmax, hmax) > 15:
             rec.warnings.append("สัดส่วนยาวมาก (>15:1) - ถ้าเป็นเหล็กฉาก/โปรไฟล์ที่ซื้อมา ให้ติ๊กไม่ตัด")
 
+    def sets(self) -> int:
+        try:
+            return max(1, int(self.settings.get("sets") or 1))
+        except (TypeError, ValueError):
+            return 1
+
     def recompute(self):
         with self.lock:
+            n_sets = self.sets()
+            for rec in self.parts:
+                rec.qty = (rec.qty_override if rec.qty_override else rec.qty_asm) * n_sets
             for rec in self.parts:
                 self._ensure_flat(rec)
             self._rebuild_groups()
@@ -309,6 +323,19 @@ class Project:
                 rec.flat_key = None
             if "flip" in patch:
                 rec.flip = bool(patch["flip"])
+            if "qty" in patch:
+                v = patch["qty"]
+                try:
+                    v = int(v) if v not in (None, "") else None
+                except (TypeError, ValueError):
+                    raise ValueError("จำนวนต้องเป็นตัวเลข")
+                if v is not None and v < 1:
+                    raise ValueError("จำนวนต้องมากกว่า 0 (ถ้าไม่ต้องตัด ให้ติ๊กไม่ตัดแทน)")
+                rec.qty_override = None if v in (None, rec.qty_asm) else v
+            if "paint" in patch:
+                rec.paint = None if patch["paint"] is None else bool(patch["paint"])
+            if "plate" in patch:
+                rec.plate = bool(patch["plate"])
             if "category" in patch:
                 rec.category = str(patch["category"] or "").strip()[:60]
                 if rec.category:
@@ -355,6 +382,12 @@ class Project:
                         rec.status = "sheet"
                         rec.flat_key = None
             self.recompute()
+
+    def paints(self, rec: PartRecord) -> bool:
+        """Is this part painted? The user's tick, else: unless its steel is in the price list's "no paint"."""
+        if rec.paint is not None:
+            return rec.paint
+        return rec.material_id not in (self.pricing.get("no_paint") or [])
 
     def rename_group(self, key: str, name: str):
         """Name a DXF group (empty -> back to the steel code). The name is used for the DXF file name."""
@@ -415,7 +448,8 @@ class Project:
             "materials": self.store.data["materials"],
             "pricing": self.pricing, "pricing_meta": self.pricing_meta, "group_names": self.group_names,
             "parts": [{"id": r.id, "name": r.name, "include": r.include, "material_id": r.material_id,
-                       "t_override": r.t_override, "flip": r.flip, "category": r.category} for r in self.parts],
+                       "t_override": r.t_override, "flip": r.flip, "category": r.category,
+                       "qty_override": r.qty_override, "paint": r.paint, "plate": r.plate} for r in self.parts],
         }
 
     def apply_state(self, st: dict):
@@ -432,6 +466,9 @@ class Project:
                 rec.t_override = float(d["t_override"]) if d.get("t_override") else None
                 rec.flip = bool(d.get("flip"))
                 rec.category = str(d.get("category") or "")
+                rec.qty_override = int(d["qty_override"]) if d.get("qty_override") else None
+                rec.paint = None if d.get("paint") is None else bool(d["paint"])
+                rec.plate = bool(d.get("plate"))
                 want = bool(d.get("include", rec.include))
                 if want and rec.status == "excluded" and rec.analysis and rec.analysis.ok:
                     rec.status = "sheet"
@@ -479,7 +516,9 @@ class Project:
             }
         return {
             "thumb": self._thumb(rec),
-            "id": rec.id, "name": rec.name, "qty": rec.qty, "status": rec.status, "include": rec.include,
+            "id": rec.id, "name": rec.name, "qty": rec.qty, "qty_asm": rec.qty_asm, "qty_override": rec.qty_override,
+            "paint": self.paints(rec), "paint_auto": rec.paint is None, "plate": rec.plate,
+            "status": rec.status, "include": rec.include,
             "reason": rec.auto_reason, "reason_code": rec.reason_code,
             "material_id": rec.material_id, "category": rec.category,
             "thickness": {"measured": rec.measured_t, "used": t_used, "override": rec.t_override,
@@ -537,6 +576,7 @@ class Project:
             "settings": self.settings, "profile": prof, "materials": self.store.data["materials"],
             "profiles": [{"id": p["id"], "name": p["name"]} for p in self.store.data["profiles"]],
             "parts": parts, "groups": groups, "can_save": bool(self.source_path),
+            "sets": self.sets(),
             "summary": {"unique": len(parts), "pieces": total_pieces, "cut_unique": len(parts) - len(excl),
                         "cut_pieces": cut_pieces, "excluded_unique": len(excl),
                         "excluded_pieces": total_pieces - cut_pieces},

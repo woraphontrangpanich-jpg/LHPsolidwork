@@ -119,16 +119,16 @@ def build_pricing_xlsx(project) -> bytes:
         r += 1
     r += 1
     settings = [("paint", "ค่าสี (บาท / ตร.ม.)", P["paint_per_m2"]), ("plating", "ค่าชุบ (บาท / กก.)", P["plating_per_kg"]),
-                ("incplate", "รวมค่าชุบในราคารวม (1 = รวม, 0 = ไม่รวม)", 1 if P["include_plating"] else 0),
                 ("markup", "บวกเพิ่ม (%)", P["markup_pct"])]
     cell = {}
     for key, label, val in settings:
         _put(N, (r, 1), label, font=F_CELL)
-        _put(N, (r, 2), val, fill=YELLOW, fmt=ACC2 if key != "incplate" else None)
+        _put(N, (r, 2), val, fill=YELLOW, fmt=ACC2)
         cell[key] = f"'{NOTE}'!$B${r}"
         r += 1
-    _put(N, (r, 1), "ไม่ทาสีกับเหล็ก", font=F_CELL)
-    _put(N, (r, 2), ", ".join(P["no_paint"]) or "-", font=F_CELL)
+    _put(N, (r, 1), "ทาสี / ชุบ ชิ้นไหน: ช่อง “ทาสี” และ “ชุบ” (1 = ใช่, 0 = ไม่) ในหน้ารายละเอียด", font=F_CELL, border=None)
+    r += 1
+    _put(N, (r, 1), "ค่าสีคิดจากแผ่นคลี่สี่เหลี่ยมเต็ม (X × Y) ไม่หักรู · ค่าจริง (ตามขอบชิ้น ไม่หักรู) แสดงไว้เทียบ", font=F_CELL, border=None)
     r += 2
     _put(N, (r, 1), "เผื่อที่ clamp & วางแบบ อยู่ที่ช่อง R2 ของหน้ารายละเอียด", font=F_CELL, border=None)
 
@@ -183,11 +183,13 @@ def build_pricing_xlsx(project) -> bytes:
     for k, v in widths.items():
         D.column_dimensions[k].width = v
     extras = [(k, e) for k, e in enumerate(P["extras"]) if e["unit"] != "job"]
-    ex0 = 29                                                         # AC
+    PT, PL = "AC", "AD"                                               # ticks: ทาสี / ชุบ (1 or 0)
+    ex0 = 31                                                         # AE: one column per extra cost
     ex_total = ex0 + len(extras)
     use_col = ex_total + 1                                           # ใช้เนื้อแผ่น %, เศษ %, ใช้กี่แผ่น
-    note_col = use_col + 3
-    for i in range(len(extras) + 5):
+    rv_col = use_col + 3                                             # real vs flat: area, paint, plating
+    note_col = rv_col + 6
+    for i in range(len(extras) + 11):
         D.column_dimensions[COL(ex0 + i)].width = 12
     D.column_dimensions[COL(note_col)].width = 40
     _put(D, "A1", f"ใบคิดราคา {project.job_name}", font=Font(name=ANG, size=18, bold=True), border=None)
@@ -218,6 +220,8 @@ def build_pricing_xlsx(project) -> bytes:
     _head(D, "Z4", "ชิ้นส่วน", merge="Z4:Z5")
     _head(D, "AA4", "จุดพับ", merge="AA4:AA5")
     _head(D, "AB4", "รู", merge="AB4:AB5")
+    _head(D, f"{PT}4", "ทาสี\n(1/0)", fill=YELLOW, merge=f"{PT}4:{PT}5")
+    _head(D, f"{PL}4", "ชุบ\n(1/0)", fill=YELLOW, merge=f"{PL}4:{PL}5")
     for i, (k, e) in enumerate(extras):
         L = COL(ex0 + i)
         _head(D, f"{L}4", f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})", fill=GREY, merge=f"{L}4:{L}5")
@@ -226,6 +230,12 @@ def build_pricing_xlsx(project) -> bytes:
     _head(D, f"{COL(use_col)}5", "ใช้ (%)", fill=GREY)
     _head(D, f"{COL(use_col + 1)}5", "เศษเหลือ (%)", fill=GREY)
     _head(D, f"{COL(use_col + 2)}5", "ใช้ (แผ่น)", fill=GREY)
+    for j, (top, cols) in enumerate((("พื้นที่ (ตร.ม.)", ("จริง", "คลี่")), ("ค่าสี / ชิ้น", ("จริง", "คลี่")),
+                                     ("ค่าชุบ รวม", ("จริง", "คลี่")))):
+        c0 = rv_col + 2 * j
+        _head(D, f"{COL(c0)}4", top, fill=GREY, merge=f"{COL(c0)}4:{COL(c0 + 1)}4")
+        _head(D, f"{COL(c0)}5", cols[0], fill=GREY)
+        _head(D, f"{COL(c0 + 1)}5", cols[1], fill=GOLD)
     _head(D, f"{COL(note_col)}4", "หมายเหตุ", merge=f"{COL(note_col)}4:{COL(note_col)}5")
     D.freeze_panes = "B6"
 
@@ -244,6 +254,8 @@ def build_pricing_xlsx(project) -> bytes:
         _put(D, (r, 26), row["name"], font=F_CELL)
         _put(D, (r, 27), row["bends"], align=CENTER)
         _put(D, (r, 28), row["holes"], align=CENTER)
+        _put(D, f"{PT}{r}", 1 if row["paint_on"] else 0, fill=YELLOW, align=CENTER)
+        _put(D, f"{PL}{r}", 1 if row["plate_on"] else 0, fill=YELLOW, align=CENTER)
         if sh is None:
             _put(D, (r, 6), "ตรวจดู", fill=ERR, align=CENTER)
             for c in (7, 8, 9, 10, 12, 13):
@@ -254,13 +266,12 @@ def build_pricing_xlsx(project) -> bytes:
         _put(D, (r, 6), sheet_key(sh), fill=GREY, align=CENTER)
         _put(D, (r, 7), f'=IFERROR(IF(AND(F{r}<>"",B{r}<>""),VLOOKUP(B{r},{TBL},MATCH(F{r},{HDR},0),FALSE),""),"")', fill=GREY, fmt=ACC0)
         _put(D, (r, 8), f'=IFERROR(ROUNDUP(G{r}/MAX(T{r},W{r}),0),"")', fill=GREY, fmt=ACC0)
-        nopaint = row["material"] in P["no_paint"]
-        _put(D, (r, 9), 0 if nopaint else f'=IF(OR(D{r}="",E{r}=""),"",ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))', fill=GREY, fmt=ACC0)
-        _put(D, (r, 10), f'=IF(L{r}="","",L{r}*{cell["plating"]})', fill=GREY, fmt=ACC0)
+        _put(D, (r, 9), f'=IF({PT}{r}=1,IF(OR(D{r}="",E{r}=""),"",ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0)),0)', fill=GREY, fmt=ACC0)
+        _put(D, (r, 10), f'=IF(AND({PL}{r}=1,L{r}<>""),L{r}*{cell["plating"]},0)', fill=GREY, fmt=ACC2)
         _put(D, (r, 12), f'=IFERROR(VLOOKUP(B{r},{KG},4,FALSE)/(1220*2440)*D{r}*E{r}*K{r},"")', fill=GREY, fmt=ACC2)
-        _put(D, (r, 13), f'=SUM(H{r}:I{r})*K{r}+{EXT}{r}*K{r}+IF({cell["incplate"]}=1,J{r},0)', fill=GOLD, fmt=ACC0)
+        _put(D, (r, 13), f'=SUM(H{r}:I{r})*K{r}+{EXT}{r}*K{r}+J{r}', fill=GOLD, fmt=ACC0)
         _put(D, (r, 14), None, fill=GREY2, fmt=ACC0)
-        _put(D, (r, 15), f'=IF(N{r}="","",(IFERROR(ROUNDUP(N{r}/MAX(T{r},W{r}),0),"")+ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))*K{r})',
+        _put(D, (r, 15), f'=IF(N{r}="","",(IFERROR(ROUNDUP(N{r}/MAX(T{r},W{r}),0),"")+IF({PT}{r}=1,ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0),0))*K{r})',
              fill=GREY2, fmt=ACC0)
         W_ = f'LEFT(F{r},FIND("x",F{r})-1)'
         L_ = f'RIGHT(F{r},LEN(F{r})-FIND("x",F{r}))'
@@ -282,6 +293,14 @@ def build_pricing_xlsx(project) -> bytes:
         _put(D, (r, use_col), f'=IFERROR(MAX(T{r},W{r})*D{r}*E{r}/({W_}*{L_}),"")', fill=GREY, fmt="0.0%")
         _put(D, (r, use_col + 1), f'=IFERROR(1-{U}{r},"")', fill=GREY, fmt="0.0%")
         _put(D, (r, use_col + 2), f'=IFERROR(K{r}/MAX(T{r},W{r}),"")', fill=GREY, fmt="0.000")
+        A1, A2 = COL(rv_col), COL(rv_col + 1)
+        _put(D, (r, rv_col), round(row["area_real"] / 1e6, 6), fill=GREY, fmt="0.0000")             # outline, holes kept
+        _put(D, (r, rv_col + 1), f"=D{r}*E{r}/1000000", fill=GOLD, fmt="0.0000")                 # full flat rectangle
+        _put(D, (r, rv_col + 2), f'=IF({PT}{r}=1,ROUNDUP({A1}{r}*{cell["paint"]},0),0)', fill=GREY, fmt=ACC0)
+        _put(D, (r, rv_col + 3), f"=I{r}", fill=GOLD, fmt=ACC0)
+        _put(D, (r, rv_col + 4), f'=IF({PL}{r}=1,IFERROR(VLOOKUP(B{r},{KG},4,FALSE)/(1220*2440)*{A1}{r}*1000000*K{r}*{cell["plating"]},0),0)',
+             fill=GREY, fmt=ACC2)
+        _put(D, (r, rv_col + 5), f"=J{r}", fill=GOLD, fmt=ACC2)
         _put(D, (r, note_col), "", font=F_CELL)
         r += 1
     last = r - 1
@@ -307,7 +326,8 @@ def build_pricing_xlsx(project) -> bytes:
             fill=PatternFill("solid", bgColor="FF9999")))
     _put(D, (total_row + 2, 1), ("แผ่นที่ใช้ = ขนาดที่ SheetFlat เลือก (ลองทุกขนาดที่มี ทั้งเรียงแบบ 1 และ 2 แล้วเลือกที่ค่าโลหะต่อชิ้นถูกที่สุด) "
                                  "· ช่องสีฟ้า = แบบที่วางได้มากกว่า · ใส่ราคาเทียบในช่อง N ได้เหมือนเดิม "
-                                 "· การใช้แผ่นเหล็ก: ใช้ (%) = ชิ้นต่อแผ่น × X × Y ÷ พื้นที่แผ่น, ใช้ (แผ่น) = จำนวน ÷ ชิ้นต่อแผ่น"), font=F_CELL, border=None)
+                                 "· การใช้แผ่นเหล็ก: ใช้ (%) = ชิ้นต่อแผ่น × X × Y ÷ พื้นที่แผ่น, ใช้ (แผ่น) = จำนวน ÷ ชิ้นต่อแผ่น "
+                                 "· ทาสี/ชุบ: ใส่ 1 หรือ 0 ได้ · ราคาใช้ค่าคลี่ (สี่เหลี่ยมเต็ม ไม่หักรู) ค่าจริง (ตามขอบชิ้น ไม่หักรู) แสดงไว้เทียบ"), font=F_CELL, border=None)
 
     # ================================================================ สรุป (first page)
     S.sheet_view.showGridLines = False

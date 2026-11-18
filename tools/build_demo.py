@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import shapes  # noqa: E402
+from sheetflat import __version__  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 DOCS = ROOT / "docs"
@@ -129,7 +130,8 @@ def main():
     html = (web / "index.html").read_text(encoding="utf-8")
     html = html.replace('href="/static/style.css"', 'href="style.css"')
     html = html.replace('<script src="/static/app.js" defer></script>',
-                        '<script>window.SHEETFLAT_DEMO = "demo/";</script>\n<script src="app.js" defer></script>')
+                        f'<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "{__version__}";</script>\n'
+                        '<script src="app.js" defer></script>')
     html = html.replace('href="/" aria-label="SheetFlat"', 'href="./" aria-label="SheetFlat"')
     (DOCS / "index.html").write_text(html, encoding="utf-8")
     (DOCS / ".nojekyll").write_text("", encoding="utf-8")

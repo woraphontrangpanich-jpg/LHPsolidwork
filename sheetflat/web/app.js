@@ -326,7 +326,7 @@ function renderOverview() {
     const rows = g.part_ids.map((pid) => {
       const p = part(pid), f = p.flat;
       return `<tr class="click ${S.picked.has(pid) && ed ? "picked" : ""}" data-part="${pid}">${pick(pid)}<td>${thumbSVG(p.thumb)}</td><td>${esc(p.name)}${p.warnings.length ? ' <span class="badge">ตรวจสอบ</span>' : ""}</td>
-        <td class="n">${fmt(f.w)} × ${fmt(f.h)}</td><td class="n">${f.bends.length}</td><td class="n">${f.holes}</td><td class="qty">${p.qty}</td></tr>`;
+        <td class="n">${fmt(f.w)} × ${fmt(f.h)}</td><td class="n">${f.bends.length}</td><td class="n">${f.holes}</td><td class="qty" ${p.qty !== p.qty_asm ? `title="ใน Assembly ${p.qty_asm} ชิ้น"` : ""}>${p.qty}${p.qty_override ? '<small class="qmark">แก้แล้ว</small>' : ""}</td></tr>`;
     }).join("");
     const tpx = Math.max(3, Math.round(g.thickness * 5));
     return `<section class="ogroup"><div class="ogroup-head">
@@ -351,7 +351,8 @@ function renderOverview() {
   const box = $("#overview");
   box.innerHTML = `<article class="order"><header class="order-head"><div><h2>ใบสั่งตัด ${esc(P.job)}</h2><p>${esc(P.source)} · ${new Date().toLocaleDateString("th-TH")} · ${esc(P.profile.name)}</p></div>
     <div class="totals"><div><b>${nfiles}</b><span>ไฟล์ DXF</span></div><div><b>${s.cut_pieces}</b><span>ชิ้นที่ตัด</span></div><div><b>${s.excluded_pieces}</b><span>ไม่ตัด</span></div></div></header>
-    <div class="edit-row">${ed ? "" : `<button class="btn small" id="ovEdit">แก้ไขกลุ่ม</button><span class="hint">ย้ายชิ้นไปเหล็กชนิดหรือความหนาอื่น หรือแยกเป็นกลุ่มที่ไม่ต้องตัด เช่น ซื้อสำเร็จรูป</span>`}</div>
+    <div class="edit-row">${ed ? "" : `<button class="btn small" id="ovEdit">แก้ไขกลุ่ม</button><span class="hint">ย้ายชิ้นไปเหล็กชนิดหรือความหนาอื่น หรือแยกเป็นกลุ่มที่ไม่ต้องตัด เช่น ซื้อสำเร็จรูป</span>`}
+      <label class="sets-box">จำนวนชุดที่ผลิต<input type="number" id="ovSets" min="1" step="1" value="${P.sets || 1}" aria-label="จำนวนชุดที่ผลิต"></label></div>
     ${ed ? moveBarHTML() : ""}
     ${groups || '<p class="hint">ยังไม่มีชิ้นส่วนที่จะตัด</p>'}${exHTML}</article>`;
   box.querySelectorAll("tr[data-part]").forEach((tr) => tr.addEventListener("click", (e) => {
@@ -364,6 +365,8 @@ function renderOverview() {
   box.querySelectorAll("[data-group]").forEach((b) => b.addEventListener("click", () => selectGroup(b.dataset.group)));
   box.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () => download(b.dataset.dl)));
   bindRename(box);
+  const st = $("#ovSets");
+  if (st) st.addEventListener("change", () => { const v = Math.round(+st.value); if (DEMO) { toast(DEMO_MSG); return; } if (v >= 1) patchSettings({ sets: v }); else toast("จำนวนชุดต้องมากกว่า 0"); });
   const e1 = $("#ovEdit"); if (e1) e1.onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } S.editGroups = true; S.picked.clear(); S.move = null; renderOverview(); };
   if (ed) bindMoveBar();
 }
@@ -580,7 +583,14 @@ function bindGroupInspector() {
 function partInspector(p) {
   const P = S.project, f = p.flat, c = p.checks || {}, t = p.thickness;
   const mats = P.materials.map((m) => `<option value="${esc(m.id)}" ${m.id === p.material_id ? "selected" : ""}>${esc(m.name)}</option>`).join("");
-  let h = `<div class="sec"><h2 class="insp-title">${esc(p.name)}</h2><p class="insp-sub">จำนวนใน Assembly ${p.qty} ชิ้น · ผิว ${p.faces} ผิว</p></div>`;
+  const sets = P.sets || 1;
+  let h = `<div class="sec"><h2 class="insp-title">${esc(p.name)}</h2><p class="insp-sub">ใน Assembly ${p.qty_asm} ชิ้น · ผิว ${p.faces} ผิว</p></div>`;
+  h += `<div class="sec"><h3>จำนวนที่ผลิต</h3>
+    <div class="row"><label for="pQty">จำนวน${sets > 1 ? " ต่อชุด" : ""}</label><input type="number" id="pQty" min="1" step="1" value="${p.qty_override ?? p.qty_asm}">
+      ${p.qty_override ? `<button class="btn small ghost" id="pQtyReset" type="button">ใช้ตาม Assembly (${p.qty_asm})</button>` : ""}</div>
+    <p class="hint">${sets > 1 ? `ทั้งหมด ${p.qty} ชิ้น (${sets} ชุด) · ` : ""}จำนวนนี้ใช้ทั้งใน DXF และการคิดราคา</p>
+    ${f ? `<label class="switch"><input type="checkbox" id="pPaint" ${p.paint ? "checked" : ""}> ทาสี</label>
+    <label class="switch"><input type="checkbox" id="pPlate" ${p.plate ? "checked" : ""}> ชุบ</label>` : ""}</div>`;
   h += `<div class="sec"><label class="switch"><input type="checkbox" id="pInc" ${p.include ? "checked" : ""} ${p.status === "excluded" && p.reason_code === "not_sheet" ? "disabled" : ""}> นำไปตัด (ใส่ใน DXF)</label>`;
   if (!p.include && p.reason) h += `<p class="hint">${esc(p.reason)}</p>`;
   h += `</div>`;
@@ -630,6 +640,10 @@ function bindPartInspector(p) {
   const m = $("#pMat"); if (m) m.addEventListener("change", () => patchPart(p.id, { material_id: m.value }));
   const t = $("#pT"); if (t) t.addEventListener("change", () => patchPart(p.id, { t_override: t.value === "" ? null : +t.value }));
   const fl = $("#pFlip"); if (fl) fl.addEventListener("change", () => patchPart(p.id, { flip: fl.checked }));
+  const q = $("#pQty"); if (q) q.addEventListener("change", () => { const v = Math.round(+q.value); if (v >= 1) patchPart(p.id, { qty: v }); else { toast("จำนวนต้องมากกว่า 0"); renderInspector(); } });
+  const qr = $("#pQtyReset"); if (qr) qr.addEventListener("click", () => patchPart(p.id, { qty: null }));
+  const pp = $("#pPaint"); if (pp) pp.addEventListener("change", () => patchPart(p.id, { paint: pp.checked }));
+  const pl = $("#pPlate"); if (pl) pl.addEventListener("change", () => patchPart(p.id, { plate: pl.checked }));
   document.querySelectorAll("tr[data-bend]").forEach((tr) => {
     tr.addEventListener("mouseenter", () => viewer && viewer.highlightBend(+tr.dataset.bend));
     tr.addEventListener("mouseleave", () => viewer && viewer.highlightBend(-1));
@@ -1164,9 +1178,9 @@ function renderPriceForm() {
       <h3 class="dlg-h3">ค่าสี ค่าชุบ</h3>
       <div class="grid2">
         <label>ค่าสี (บาท / ตร.ม.)<input type="number" step="10" min="0" id="prPaint" value="${P.paint_per_m2}" ${dis}></label>
-        <label>ไม่ทาสีกับเหล็ก<input type="text" id="prNoPaint" value="${esc(P.no_paint.join(", "))}" placeholder="เช่น SUS" ${dis}></label>
+        <label>เหล็กที่ปกติไม่ทาสี<input type="text" id="prNoPaint" value="${esc(P.no_paint.join(", "))}" placeholder="เช่น SUS" ${dis}></label>
         <label>ค่าชุบ (บาท / กก.)<input type="number" step="1" min="0" id="prPlate" value="${P.plating_per_kg}" ${dis}></label>
-        <label class="switch" style="align-self:end"><input type="checkbox" id="prIncPlate" ${P.include_plating ? "checked" : ""} ${dis}> รวมค่าชุบในราคารวม</label>
+        <p class="hint" style="grid-column:1/3;margin:0">เลือกชิ้นที่ทาสี / ชุบ ได้ในตารางรายชิ้นทางขวา · ค่าสีคิดจากแผ่นคลี่สี่เหลี่ยมเต็ม (กว้าง × ยาว) ไม่หักรู</p>
       </div>
       <h3 class="dlg-h3">ค่าใช้จ่ายอื่น</h3>
       <p class="hint">เพิ่มรายการเองได้ เช่น ค่าพับ ค่าติ๊ก เจาะรู พ่นทราย ค่าขนส่ง · โปรแกรมนับจุดพับและรูให้เอง</p>
@@ -1206,7 +1220,6 @@ function syncPrice() {
   body.querySelectorAll("[data-e]").forEach((i) => { const e = P.extras[+i.dataset.e], f = i.dataset.f; e[f] = f === "on" ? i.checked : f === "rate" ? +i.value || 0 : i.value; });
   P.margin = +$("#prMargin").value || 0; P.paint_per_m2 = +$("#prPaint").value || 0;
   P.plating_per_kg = +$("#prPlate").value || 0; P.markup_pct = +$("#prMarkup").value || 0;
-  P.include_plating = $("#prIncPlate").checked;
   P.no_paint = $("#prNoPaint").value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 }
 function schedulePrice() { clearTimeout(schedulePrice._t); schedulePrice._t = setTimeout(pushPrice, 350); }
@@ -1229,16 +1242,28 @@ function renderPriceResult() {
   const g = R.groups.map((x) => `<tr><td><b>${esc(x.name || x.code)}</b>${x.name && x.name !== x.code ? `<small>${esc(x.code)}</small>` : ""}</td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.extra, 2)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
     <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ${v} แผ่น`).join(", ") || "-"}${x.sheet_area ? ` · ใช้เนื้อแผ่น ${fmt(+(x.use * 100).toFixed(1), 1)}% เศษเหลือ ${fmt(100 - +(x.use * 100).toFixed(1), 1)}%` : ""}</td></tr>`).join("") +
     R.job_extras.map((e) => `<tr><td colspan="6">${esc(e.name)} <small>(ต่องาน)</small></td><td class="n"><b>${baht(e.amount, 2)}</b></td></tr>`).join("");
-  const rows = R.rows.map((r) => r.error ? `<tr class="err"><td>${esc(r.name)}</td><td colspan="6">${esc(r.error)}</td></tr>` :
+  const rows = R.rows.map((r) => r.error ? `<tr class="err"><td>${esc(r.name)}</td><td colspan="9">${esc(r.error)}</td></tr>` :
     `<tr><td>${esc(r.name)}<small>${esc(r.code)} · ${fmt(r.x, 1)} × ${fmt(r.y, 1)} มม.</small></td>
       <td>${r.sheet.w}×${r.sheet.l}<small>เรียงแบบ ${r.sheet.arr}${r.sheet.arr === 2 ? " (หมุน 90°)" : ""} · ${r.sheet.nx}×${r.sheet.ny} = ${r.sheet.count} ชิ้น · ใช้ ${fmt(+(r.sheet.use * 100).toFixed(1), 1)}% เศษ ${fmt(100 - +(r.sheet.use * 100).toFixed(1), 1)}%</small></td>
-      <td class="n">${baht(r.metal)}</td><td class="n">${baht(r.paint)}</td><td class="n">${baht(r.extra, r.extra % 1 ? 2 : 0)}</td><td class="n">${r.qty}</td><td class="n"><b>${baht(r.total, 2)}</b></td></tr>`).join("");
+      <td class="tick"><input type="checkbox" data-tp="${r.part_id}" ${r.paint_on ? "checked" : ""} aria-label="ทาสี ${esc(r.name)}" ${DEMO ? "disabled" : ""}></td>
+      <td class="tick"><input type="checkbox" data-tl="${r.part_id}" ${r.plate_on ? "checked" : ""} aria-label="ชุบ ${esc(r.name)}" ${DEMO ? "disabled" : ""}></td>
+      <td class="n">${baht(r.metal)}</td><td class="n">${baht(r.paint)}${r.paint_on ? `<small>จริง ${baht(r.paint_real)}</small>` : ""}</td>
+      <td class="n">${baht(r.plating, 2)}</td><td class="n">${baht(r.extra, r.extra % 1 ? 2 : 0)}</td><td class="n">${r.qty}</td><td class="n"><b>${baht(r.total, 2)}</b></td></tr>`).join("");
   box.innerHTML = `
     <div class="price-total"><span>ราคารวม${R.markup ? " (รวมบวกเพิ่ม)" : ""}</span><b>${baht(R.total, 2)}</b><small>บาท · เหล็ก ${fmt(R.weight, 2)} กก.${R.markup ? ` · บวกเพิ่ม ${baht(R.markup, 2)}` : ""}</small></div>
     ${R.errors.length ? `<p class="err">${R.errors.length} ชิ้นคิดราคาไม่ได้ ดูแถวสีแดง</p>` : ""}
     <table class="otable ptab"><thead><tr><th>วัตถุดิบ</th><th class="n">ชิ้น</th><th class="n">กก.</th><th class="n">โลหะ</th><th class="n">สี</th><th class="n">อื่นๆ</th><th class="n">รวม</th></tr></thead><tbody>${g}</tbody></table>
     <h3 class="dlg-h3">รายชิ้น (ราคาต่อชิ้น)</h3>
-    <table class="otable ptab"><thead><tr><th>ชิ้นส่วน</th><th>แผ่นที่ใช้ · การวาง</th><th class="n">โลหะ</th><th class="n">สี</th><th class="n">อื่นๆ</th><th class="n">จำนวน</th><th class="n">รวม</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <table class="otable ptab"><thead><tr><th>ชิ้นส่วน</th><th>แผ่นที่ใช้ · การวาง</th><th class="tick">ทาสี</th><th class="tick">ชุบ</th><th class="n">โลหะ/ชิ้น</th><th class="n">สี/ชิ้น</th><th class="n">ชุบรวม</th><th class="n">อื่นๆ/ชิ้น</th><th class="n">จำนวน</th><th class="n">รวม</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="hint">ค่าสีใช้ค่าคลี่ (แผ่นสี่เหลี่ยมเต็ม ไม่หักรู) · “จริง” = ตามขอบชิ้นจริง ไม่หักรู แสดงไว้เทียบ</p>`;
+  box.querySelectorAll("[data-tp],[data-tl]").forEach((c) => c.addEventListener("change", async () => {
+    const body = c.dataset.tp ? { paint: c.checked } : { plate: c.checked };
+    try {
+      setProject(await sendJSON(`/api/jobs/${S.jobId}/parts/${c.dataset.tp || c.dataset.tl}`, "PATCH", body));
+      S.price = Object.assign(await getJSON(`/api/jobs/${S.jobId}/pricing`), { pricing: S.price.pricing });
+      renderPriceResult();
+    } catch (e) { toast(e.message); }
+  }));
 }
 async function priceXlsx() {
   if (DEMO) { download("pricing"); return; }
@@ -1305,9 +1330,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     const go = document.getElementById("demoGo");
     if (go) go.addEventListener("click", async () => { showBusy("กำลังเปิดงานตัวอย่าง"); try { await pollJob("demo"); } catch (e) { backToLanding(e.message); } });
   }
+  const showVer = (v) => { if (v) { const e = $("#appVer"); e.textContent = "v" + v.replace(/^v/, ""); e.hidden = false; } };
+  if (DEMO) showVer(window.SHEETFLAT_VERSION);
   if (!DEMO) {
     try {
       const info = await (await fetch("/api/info")).json();
+      showVer(info.version);
       if (info.cloud) { document.querySelector(".pathbox").hidden = true; document.body.classList.add("cloud"); }
     } catch (_) { /* ignore */ }
   }

@@ -190,3 +190,41 @@ def test_rename_groups(client, job):
     client.post(f"/api/jobs/{jid}/move", json={"ids": [hook["id"]], "target": {"category": "ซื้อสำเร็จรูป"}})
     P = client.post(f"/api/jobs/{jid}/rename", json={"category": "ซื้อสำเร็จรูป", "name": "ลูกค้าส่งมาเอง"}).json()
     assert next(p for p in P["parts"] if p["name"] == "Hook")["category"] == "ลูกค้าส่งมาเอง"
+
+
+def test_quantities_sets_paint_and_plating(client, job):
+    jid, P = job
+    body = next(p for p in P["parts"] if p["name"] == "Body")
+    assert body["qty_asm"] == 1 and body["qty"] == 1
+    P = client.patch(f"/api/jobs/{jid}/parts/{body['id']}", json={"qty": 5}).json()
+    b = next(p for p in P["parts"] if p["id"] == body["id"])
+    assert b["qty"] == 5 and b["qty_override"] == 5
+    g = next(x for x in P["groups"] if body["id"] in x["part_ids"])
+    layout = client.get(f"/api/jobs/{jid}/groups/{g['id']}/layout/0").json()
+    assert sum(1 for it in layout["items"] if it["part_id"] == body["id"]) == 5           # 5 copies in the DXF
+    assert client.patch(f"/api/jobs/{jid}/parts/{body['id']}", json={"qty": 0}).status_code == 400
+    # 3 sets: every quantity x 3
+    P = client.patch(f"/api/jobs/{jid}/settings", json={"sets": 3}).json()
+    assert P["sets"] == 3 and next(p for p in P["parts"] if p["id"] == body["id"])["qty"] == 15
+    hook = next(p for p in P["parts"] if p["name"] == "Hook")
+    assert hook["qty"] == hook["qty_asm"] * 3
+    # paint off, plating on for Body
+    client.patch(f"/api/jobs/{jid}/parts/{body['id']}", json={"paint": False, "plate": True})
+    r = client.get(f"/api/jobs/{jid}/pricing").json()
+    row = next(x for x in r["rows"] if x["part_id"] == body["id"])
+    assert row["paint"] == 0 and not row["paint_on"] and row["plate_on"] and row["plating"] > 0
+    assert row["total"] == pytest.approx((row["metal"] + row["extra"]) * 15 + row["plating"], abs=1e-6)
+    # paint is priced on the full flat rectangle; the real outline (holes not deducted) is shown too
+    other = next(x for x in r["rows"] if x["name"] == "Bottom")
+    assert other["paint_on"] and other["area_rect"] == pytest.approx(other["x"] * other["y"], rel=1e-6)
+    assert 0 < other["area_real"] <= other["area_rect"] + 1e-6 and other["paint_real"] <= other["paint"]
+    # survives save / load
+    blob = client.get(f"/api/jobs/{jid}/save").content
+    after = wait(client, client.post("/api/load", files={"file": ("q.sheetflat", blob)}).json()["id"])
+    b2 = next(p for p in after["parts"] if p["name"] == "Body")
+    assert after["sets"] == 3 and b2["qty"] == 15 and not b2["paint"] and b2["plate"]
+    # Excel: tick columns drive paint and plating
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/jobs/{jid}/export/pricing").content))
+    d = wb["รายละเอียด"]
+    assert d["AC4"].value.startswith("ทาสี") and d["AD4"].value.startswith("ชุบ")
+    assert d["I6"].value.startswith("=IF(AC6=1") and d["J6"].value.startswith("=IF(AND(AD6=1")

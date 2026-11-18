@@ -49,15 +49,14 @@ def sha256(path: Path) -> str:
 
 
 def version() -> str:
-    v = os.environ.get("SHEETFLAT_VERSION", "").strip()
-    if v:
-        return v.lstrip("v")
-    try:
-        out = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"], cwd=ROOT,
-                             capture_output=True, text=True, check=True).stdout.strip()
-        return out.lstrip("v") or "dev"
-    except Exception:
-        return "dev"
+    """sheetflat.__version__; a release tag (SHEETFLAT_VERSION=v1.2.0) must say the same."""
+    import re as _re
+    src = (ROOT / "sheetflat" / "__init__.py").read_text(encoding="utf-8")
+    code_v = _re.search(r'__version__ = "([^"]+)"', src).group(1)
+    tag = os.environ.get("SHEETFLAT_VERSION", "").strip().lstrip("v")
+    if tag and tag != code_v:
+        sys.exit(f"release tag v{tag} does not match sheetflat.__version__ {code_v} - stopped")
+    return code_v
 
 
 def fetch_python(cache: Path) -> Path:

@@ -300,6 +300,8 @@ def edit_part(jid: str, pid: str, body: dict):
         pr.update_part(pid, body)
     except StopIteration:
         raise HTTPException(404, "ไม่พบชิ้นส่วน")
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
     return pr.to_json()
 
 
@@ -509,7 +511,8 @@ def export_all(jid: str):
 
 @app.get("/api/info")
 def info():
-    return {"solidworks": solidworks_available(), "cloud": CLOUD, "max_upload_mb": MAX_UPLOAD_MB}
+    from . import __version__
+    return {"solidworks": solidworks_available(), "cloud": CLOUD, "max_upload_mb": MAX_UPLOAD_MB, "version": __version__}
 
 
 @app.get("/healthz")

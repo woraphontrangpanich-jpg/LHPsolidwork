@@ -70,9 +70,8 @@ DEFAULT_PRICING = {
     "margin": 20.0,              # mm added to every part for clamping and spacing ("เผื่อที่ clamp & วางแบบ")
     "prices": [],                # filled from the bend table by fill_price_rows()
     "paint_per_m2": 200.0,       # ค่าสี 0.0002 baht / mm2
-    "no_paint": ["SUS"],         # steels that are not painted
+    "no_paint": ["SUS"],         # steels not painted by default (each part can be ticked)
     "plating_per_kg": 20.0,      # ค่าชุบ
-    "include_plating": False,    # the workbook shows plating but does not add it to the total
     "markup_pct": 0.0,
     "extras": [                  # other costs the user can add (Note sheet: พับ 5 บาท, ติ๊ก 5 บาท)
         {"name": "ค่าพับ", "rate": 5.0, "unit": "bend", "on": True},
@@ -118,7 +117,6 @@ def validate_pricing(p) -> dict:
     base["prices"] = prices
     for k in ("margin", "paint_per_m2", "plating_per_kg", "markup_pct"):
         base[k] = max(0.0, float(base[k] or 0))
-    base["include_plating"] = bool(base["include_plating"])
     base["no_paint"] = [str(x).strip() for x in base.get("no_paint") or [] if str(x).strip()]
     extras = []
     for e in base.get("extras") or []:

@@ -16,6 +16,7 @@
     <svg viewBox="0 0 28 28" width="26" height="26" aria-hidden="true"><path d="M3 8h22v12H3z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 8v12M17 8v12" stroke="var(--bend)" stroke-width="1.6" stroke-dasharray="2.5 2"/></svg>
     <span>SheetFlat</span>
   </a>
+  <span class="ver" id="appVer" hidden></span>
   <nav class="topnav demo-only" aria-label="เมนู">
     <a href="#" id="navTry" class="navtab" aria-current="page">ทดลองใช้งาน</a>
     <a href="#download" id="navDl" class="navtab">ดาวน์โหลดโปรแกรม</a>
@@ -232,7 +233,7 @@
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script>window.SHEETFLAT_DEMO = "demo/";</script>
+<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "1.2.0";</script>
 <script src="app.js" defer></script>
 </body>
 </html>
