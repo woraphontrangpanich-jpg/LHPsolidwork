@@ -121,3 +121,17 @@ def test_groups_split_by_thickness_and_material(store):
     pr.update_part("p2", {"material_id": "ST"})
     codes = sorted(g["code"] for g in pr.to_json()["groups"])
     assert codes == ["ST#22", "ZN#14", "ZN#22"]
+
+
+def test_angles_are_written_as_the_inside_angle(store):
+    """Press-brake convention: the angle is measured on the inside (90 -> 90, a 45 deg turn -> 135, a hem -> 0).
+    The flat length still uses the turn angle, so the K-factor result does not change."""
+    import math
+    pr = run(store, [("B45", shapes.bent_sheet(1.0, 40, 25, 45, 0.2, 30)),
+                     ("B90", shapes.bent_sheet(1.0, 40, 25, 90, 0.2, 30))])
+    p45, long45, _ = flat_len(pr, "B45")
+    b = p45["flat"]["bends"][0]
+    assert b["angle"] == pytest.approx(45, abs=0.01) and b["angle_in"] == pytest.approx(135, abs=0.01)
+    assert long45 == pytest.approx(40 + 25 + math.radians(45) * (0.2 + 0.5 * 1.0), abs=0.01)
+    p90, _, _ = flat_len(pr, "B90")
+    assert p90["flat"]["bends"][0]["angle_in"] == pytest.approx(90, abs=0.01)

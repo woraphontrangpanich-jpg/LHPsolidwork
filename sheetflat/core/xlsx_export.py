@@ -131,7 +131,7 @@ def build_xlsx(project) -> bytes:
 
     # ------------------------------------------------------------ 4. bends
     ws4 = wb.create_sheet("รอยพับ")
-    _header(ws4, 1, ["ชิ้นส่วน", "ลำดับพับ", "มุม (องศา)", "ทิศ (มองจากด้านบน)", "รัศมีใน (มม.)", "วิธีคำนวณ",
+    _header(ws4, 1, ["ชิ้นส่วน", "ลำดับพับ", "มุมด้านใน (องศา)", "ทิศ (มองจากด้านบน)", "รัศมีใน (มม.)", "วิธีคำนวณ",
                      "ค่ายืด BD (มม.)", "K-factor", "ความกว้างแถบพับ BA (มม.)", "ความยาวรอยพับ (มม.)"],
             [30, 10, 12, 18, 14, 22, 15, 10, 22, 18])
     r = 2
@@ -139,7 +139,7 @@ def build_xlsx(project) -> bytes:
         if not p["include"] or not p["flat"]:
             continue
         for i, b in enumerate(p["flat"]["bends"], 1):
-            _row(ws4, r, [p["name"], i, b["angle"], "พับขึ้น" if b["dir"] == "up" else "พับลง", b["r"],
+            _row(ws4, r, [p["name"], i, b["angle_in"], "พับขึ้น" if b["dir"] == "up" else "พับลง", b["r"],
                           "ตารางค่ายืด (90°)" if b["method"] == "table" else "K-factor",
                           b["bd"] if b["bd"] is not None else "", b["k"] if b["k"] is not None else "", b["ba"], b["len"]])
             r += 1

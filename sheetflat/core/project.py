@@ -509,7 +509,8 @@ class Project:
             dens = float(self.store.data.get("density", 7.85))
             flat = {
                 "w": round(w, 2), "h": round(h, 2), "area": round(area, 1), "holes": holes, "cut_len": round(cut, 1),
-                "bends": [{"angle": round(b.angle_deg, 2), "r": round(b.r_inner, 3), "method": b.method,
+                "bends": [{"angle": round(b.angle_deg, 2), "angle_in": round(180.0 - b.angle_deg, 2),
+                           "r": round(b.r_inner, 3), "method": b.method,
                            "bd": b.bd, "k": b.k, "ba": round(b.ba, 3), "dir": b.direction, "len": round(b.length, 2)}
                           for p in rec.pieces for b in p.bends],
                 "weight_kg": round(rec.sd.volume * dens * 1e-6, 4),
@@ -596,7 +597,8 @@ class Project:
             else:
                 prims = [transform_prim(q, dx, dy) for q in pc.prims]
                 mp = lambda p: (p[0] + dx, p[1] + dy)
-            bends = [{"a": mp(b.line[0]), "b": mp(b.line[1]), "angle": round(b.angle_deg, 2), "r": round(b.r_inner, 3),
+            bends = [{"a": mp(b.line[0]), "b": mp(b.line[1]), "angle": round(b.angle_deg, 2),
+                      "angle_in": round(180.0 - b.angle_deg, 2), "r": round(b.r_inner, 3),
                       "dir": b.direction, "method": b.method, "ba": round(b.ba, 3), "bd": b.bd, "k": b.k,
                       "tan": [[mp(a), mp(c)] for a, c in b.tan_lines]} for b in pc.bends]
             fake = Placed(Item(rec.id, rec.name, 1, pc, rec.flip), 0.0, 0.0, xmax - xmin, ymax - ymin)
@@ -612,6 +614,7 @@ class Project:
             items.append({"part_id": pl.item.part_id, "name": pl.item.name, "copy": pl.item.copy,
                           "x": round(pl.x, 2), "y": round(pl.y, 2), "w": round(pl.w, 2), "h": round(pl.h, 2),
                           "prims": prims, "loops": place_loops(pl), "bends": [{"a": b["line"][0], "b": b["line"][1], "angle": round(b["angle"], 1),
+                                                     "angle_in": round(180.0 - b["angle"], 1),
                                                      "dir": b["dir"]} for b in bends]})
         return {"group": g.id, "code": g.code, "thickness": g.thickness, "index": idx, "w": round(s.width, 2),
                 "h": round(s.height, 2), "items": items,

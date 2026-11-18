@@ -625,9 +625,9 @@ function partInspector(p) {
     h += `</div>`;
     h += `<div class="sec"><h3>รอยพับ ${f.bends.length ? "(" + f.bends.length + " จุด)" : ""}</h3>`;
     if (f.bends.length) {
-      h += `<table class="bt"><thead><tr><th>#</th><th class="n">มุม</th><th class="n">R ใน</th><th>วิธี</th><th class="n">BA</th></tr></thead><tbody>` +
-        f.bends.map((b, i) => `<tr data-bend="${i}"><td>${i + 1}</td><td class="n">${fmt(b.angle, 1)}°</td><td class="n">${fmt(b.r, 2)}</td><td><span class="tag ${b.method === "table" ? "tbl" : ""}">${b.method === "table" ? "ตาราง BD " + fmt(b.bd, 2) : "K " + b.k}</span></td><td class="n">${fmt(b.ba, 2)}</td></tr>`).join("") +
-        `</tbody></table><p class="hint">มุม = องศาที่พับออกจากแนวเรียบ (พับฉาก = 90°, พับทบ = 180°) · BA = ความกว้างแถบพับในแผ่นคลี่ · ชี้เมาส์ที่แถวเพื่อดูเส้นพับในแบบ</p>`;
+      h += `<table class="bt"><thead><tr><th>#</th><th class="n">มุมใน</th><th class="n">R ใน</th><th>วิธี</th><th class="n">BA</th></tr></thead><tbody>` +
+        f.bends.map((b, i) => `<tr data-bend="${i}"><td>${i + 1}</td><td class="n">${fmt(b.angle_in, 1)}°</td><td class="n">${fmt(b.r, 2)}</td><td><span class="tag ${b.method === "table" ? "tbl" : ""}">${b.method === "table" ? "ตาราง BD " + fmt(b.bd, 2) : "K " + b.k}</span></td><td class="n">${fmt(b.ba, 2)}</td></tr>`).join("") +
+        `</tbody></table><p class="hint">มุม = มุมด้านในหลังพับ วัดแบบเครื่องพับ (พับฉาก = 90°, พับทบ = 0°) · BA = ความกว้างแถบพับในแผ่นคลี่ · ชี้เมาส์ที่แถวเพื่อดูเส้นพับในแบบ</p>`;
     } else h += `<p class="insp-sub">ชิ้นนี้เป็นแผ่นเรียบ ไม่มีรอยพับ</p>`;
     h += `</div>`;
   }
@@ -918,7 +918,7 @@ class Viewer {
         for (const q of it.prims) if (q.t === "circle" && q.r * this.s > 6) { const [x, y] = this.w2s(...q.c); this.text("Ø" + fmt(q.r * 2, q.r * 2 >= 10 ? 1 : 2).replace(/\.00$/, ""), x, y, { size: 11, bg: false, color: c.dim }); }
         if (this.opts.bend) for (const b of it.bends) {
           const [x, y] = this.w2s((b.a[0] + b.b[0]) / 2, (b.a[1] + b.b[1]) / 2);
-          this.text(`${b.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmt(b.angle, b.angle % 1 ? 1 : 0)}°`, x, y, { size: 11.5, color: c.bend });
+          this.text(`${b.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmt(b.angle_in, b.angle_in % 1 ? 1 : 0)}°`, x, y, { size: 11.5, color: c.bend });
         }
       }
       return;
@@ -978,7 +978,7 @@ function setStatus(v) {
   if (h.kind === "circle") info.innerHTML = `รู <b>Ø ${fmt(q.r * 2)} มม.</b> · รัศมี ${fmt(q.r)}`;
   else if (h.kind === "arc") info.innerHTML = `ส่วนโค้ง <b>R ${fmt(q.r)} มม.</b> · ยาวตามโค้ง ${fmt(primLen(q))} มม.`;
   else if (h.kind === "line") { let a = Math.atan2(q.b[1] - q.a[1], q.b[0] - q.a[0]) * 180 / Math.PI; info.innerHTML = `เส้นตรง ยาว <b>${fmt(primLen(q))} มม.</b> · ${fmt(((a % 180) + 180) % 180, 1)}°`; }
-  else if (h.kind === "bend") info.innerHTML = `เส้นพับ <b>${h.info.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmt(h.info.angle, 1)}°</b>${h.info.r !== undefined ? " · R ใน " + fmt(h.info.r, 2) + " มม." : ""}${h.info.method ? " · " + (h.info.method === "table" ? "ตารางค่ายืด" : "K-factor") : ""}`;
+  else if (h.kind === "bend") info.innerHTML = `เส้นพับ <b>${h.info.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmt(h.info.angle_in, 1)}° (มุมด้านใน)</b>${h.info.r !== undefined ? " · R ใน " + fmt(h.info.r, 2) + " มม." : ""}${h.info.method ? " · " + (h.info.method === "table" ? "ตารางค่ายืด" : "K-factor") : ""}`;
   else info.innerHTML = `เส้นโค้งอิสระ ยาว <b>${fmt(primLen(q))} มม.</b>`;
 }
 function toggleOpt(k) {
