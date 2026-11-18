@@ -17,6 +17,7 @@
   --bad-bg: #fbe7e5;
   --sel: #0b7683;
   --sel-bg: #e0f1f3;
+  --bend-fill: #e9b8ac;
   --radius: 6px;
   --font: "IBM Plex Sans Thai", "Leelawadee UI", Tahoma, system-ui, sans-serif;
   --rail-w: 320px;
@@ -43,6 +44,7 @@
     --bad-bg: #3d1f1d;
     --sel: #4fc3cf;
     --sel-bg: #153138;
+    --bend-fill: #8a4a3c;
     color-scheme: dark;
   }
 }
@@ -65,6 +67,7 @@
   --bad-bg: #3d1f1d;
   --sel: #4fc3cf;
   --sel-bg: #153138;
+  --bend-fill: #8a4a3c;
   color-scheme: dark;
 }
 :root[data-theme="light"] { color-scheme: light; }
@@ -487,3 +490,16 @@ table.pt .mat-sel { min-width: 112px; }
 .cv3d { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
 .cv3d:active { cursor: grabbing; }
 .cv3d-labels { position: absolute; inset: 0; pointer-events: none; }
+
+.fold-ctl { display: inline-flex; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--zinc-200); }
+.fold-btn { background: var(--bend); color: #fff; border-color: var(--bend); min-width: 56px; font-weight: 600; }
+.fold-btn:hover { filter: brightness(1.08); }
+.fold-ctl input[type=range] { width: 120px; accent-color: var(--bend); }
+.card3d { position: absolute; z-index: 3; min-width: 220px; max-width: 300px; background: var(--paper); color: var(--ink);
+  border: 1px solid var(--zinc-300); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, .18); font-size: 13px; }
+.card3d header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px 6px 12px; border-bottom: 1px solid var(--zinc-200); }
+.card3d header button { border: 0; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: var(--steel); padding: 2px 4px; }
+.card3d header button:hover { color: var(--ink); }
+.card3d dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; padding: 8px 12px 10px; }
+.card3d dt { color: var(--steel); }
+.card3d dd { margin: 0; text-align: right; font-weight: 600; }

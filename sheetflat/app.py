@@ -433,6 +433,19 @@ def part_geometry(jid: str, pid: str):
         return pr.geometry_json(rec)
 
 
+@app.get("/api/jobs/{jid}/parts/{pid}/fold")
+def part_fold(jid: str, pid: str):
+    pr = get_job(jid)
+    rec = next((r for r in pr.parts if r.id == pid), None)
+    if rec is None:
+        raise HTTPException(404, "ไม่พบชิ้นส่วน")
+    try:
+        with pr.lock:
+            return pr.fold_json(rec)
+    except ValueError as ex:
+        raise HTTPException(404, str(ex))
+
+
 @app.get("/api/jobs/{jid}/parts/{pid}/mesh")
 def part_mesh(jid: str, pid: str):
     pr = get_job(jid)

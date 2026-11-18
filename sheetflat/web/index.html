@@ -177,8 +177,15 @@
         <button class="seg-btn" id="v3d" aria-pressed="false" title="ชิ้นงานพับแล้ว 3D หมุนดูได้">3D</button>
       </div>
       <div class="tools" id="tools3d" role="toolbar" aria-label="เครื่องมือ 3D" hidden>
+        <span class="fold-ctl" id="foldCtl">
+          <button class="tool fold-btn" id="t3Fold" title="พับตามแบบทีละรอย (#1, #2, ...)">พับ</button>
+          <input type="range" id="t3Prog" min="0" max="1000" value="0" aria-label="ความคืบหน้าการพับ">
+        </span>
         <button class="tool" id="t3Fit" title="ดูทั้งหมด (F)">ดูทั้งหมด</button>
-        <button class="tool toggle" id="t3Dim" aria-pressed="true" title="ขนาดรวม (D)">ขนาด</button>
+        <button class="tool toggle" id="t3Dim" aria-pressed="true" title="ขนาดรวม (D)">ขนาดรวม</button>
+        <button class="tool toggle" id="t3Ang" aria-pressed="true" title="มุมพับ (A)">องศา</button>
+        <button class="tool toggle" id="t3Len" aria-pressed="false" title="ความยาวขอบ (L)">ความยาว</button>
+        <button class="tool toggle" id="t3Hole" aria-pressed="false" title="ขนาดรูและรัศมีโค้ง (H)">รู/โค้ง</button>
         <button class="tool" data-view3="front" title="มองด้านหน้า">หน้า</button>
         <button class="tool" data-view3="top" title="มองด้านบน">บน</button>
         <button class="tool" data-view3="right" title="มองด้านข้าง">ข้าง</button>

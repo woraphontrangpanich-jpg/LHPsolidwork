@@ -284,5 +284,8 @@ def mesh_solid(solid, edges=None) -> dict:
             pts = pts[keep]
         lines.append({"pts": np.round(pts, 3).ravel().tolist(), "len": round(float(e.length), 3),
                       "kind": e.kind, "r": round(float(e.radius), 3) if getattr(e, "radius", None) else None})
+    if pos:                                                   # exact size from the mesh (the quick
+        P = np.asarray(pos).reshape(-1, 3)                     # bounding box over-estimates curved faces)
+        lo, hi = P.min(axis=0), P.max(axis=0)
     return {"pos": [round(v, 3) for v in pos], "idx": idx, "edges": lines,
             "bbox": [np.round(lo, 3).tolist(), np.round(hi, 3).tolist()]}

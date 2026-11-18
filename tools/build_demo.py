@@ -82,6 +82,7 @@ def main():
         shutil.rmtree(DOCS)
     (DEMO / "geom").mkdir(parents=True)
     (DEMO / "mesh").mkdir()
+    (DEMO / "fold").mkdir()
     (DEMO / "layout").mkdir()
     (DEMO / "export").mkdir()
     step = DEMO / "DemoCabinet.step"
@@ -109,6 +110,7 @@ def main():
     for p in P["parts"]:
         if p["flat"]:
             save(f"geom/{p['id']}.json", c.get(f"/api/jobs/{jid}/parts/{p['id']}/geometry").json())
+            save(f"fold/{p['id']}.json", c.get(f"/api/jobs/{jid}/parts/{p['id']}/fold").json())
         save(f"mesh/{p['id']}.json", c.get(f"/api/jobs/{jid}/parts/{p['id']}/mesh").json())
     files = {}
     for g in P["groups"]:
@@ -130,6 +132,7 @@ def main():
     shutil.copy(web / "style.css", DOCS / "style.css")
     shutil.copy(web / "app.js", DOCS / "app.js")
     shutil.copy(web / "viewer3d.js", DOCS / "viewer3d.js")
+    shutil.copy(web / "fold.js", DOCS / "fold.js")
     shutil.copytree(web / "vendor", DOCS / "vendor")
     html = (web / "index.html").read_text(encoding="utf-8")
     html = html.replace('href="/static/style.css"', 'href="style.css"')

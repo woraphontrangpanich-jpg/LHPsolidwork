@@ -28,6 +28,7 @@ function demoPath(path) {
   if ((m = path.match(/\/groups\/([^/]+)\/layout\/(\d+)$/))) return DEMO + `layout/${m[1]}_${m[2]}.json`;
   if (path.match(/^\/api\/jobs\/[^/]+\/pricing$/)) return DEMO + "pricing.json";
   if ((m = path.match(/\/parts\/([^/]+)\/mesh$/))) return DEMO + `mesh/${m[1]}.json`;
+  if ((m = path.match(/\/parts\/([^/]+)\/fold$/))) return DEMO + `fold/${m[1]}.json`;
   return null;
 }
 async function api(path, opts = {}) {
@@ -770,7 +771,8 @@ class Viewer {
     if (e.target.closest("input,select,textarea,dialog")) return;
     const k = e.key.toLowerCase();
     if (S.view3d && S.sel && S.sel.kind === "part") {
-      if (k === "f" && v3) v3.fit(); else if (k === "d") $("#t3Dim").click();
+      if (k === "f" && v3) v3.fit(); else if (k === "d") $("#t3Dim").click(); else if (k === "a") $("#t3Ang").click();
+      else if (k === "l") $("#t3Len").click(); else if (k === "h") $("#t3Hole").click();
       return;
     }
     if (k === "f") this.fit();
@@ -1044,7 +1046,7 @@ let v3 = null;
 function colors3d() {
   const cs = getComputedStyle(document.documentElement), g = (n) => cs.getPropertyValue(n).trim();
   return { zinc: g("--zinc-100"), ink: g("--ink"), dim: g("--dim"), paper: g("--paper"), steel: g("--steel"),
-           steelFill: g("--zinc-300"), font: g("--font") };
+           steelFill: g("--zinc-300"), bend: g("--bend"), bendFill: g("--bend-fill"), font: g("--font") };
 }
 async function ensure3d() {
   if (v3) return v3;
@@ -1052,7 +1054,21 @@ async function ensure3d() {
   v3 = new mod.Viewer3D($("#wrap3d"), (e) => {
     const info = $("#stInfo");
     if (!e) { info.textContent = "ลากเพื่อหมุน · คลิกขวาลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ชี้ที่ขอบเพื่อดูความยาว"; return; }
-    info.innerHTML = e.kind === "circle" ? `ขอบโค้ง <b>R ${fmt(e.r)} มม.</b> · ยาว ${fmt(e.len)} มม.` : `ขอบ ยาว <b>${fmt(e.len)} มม.</b>${e.kind === "line" ? "" : " (เส้นโค้ง)"}`;
+    info.innerHTML = e.kind === "hole" ? `รู <b>Ø ${fmt(e.r * 2)} มม.</b> · คลิกเพื่อดูรายละเอียด`
+      : e.kind === "arc" ? `ส่วนโค้ง <b>R ${fmt(e.r)} มม.</b> · ยาว ${fmt(e.len)} มม. · คลิกเพื่อดูรายละเอียด`
+      : `ขอบ ยาว <b>${fmt(e.len)} มม.</b>${e.kind === "line" ? "" : " (เส้นโค้ง)"} · คลิกเพื่อดูรายละเอียด`;
+  }, (st) => {
+    $("#foldCtl").hidden = !!st.solid;
+    if (st.solid) return;
+    $("#t3Fold").textContent = st.folded ? "คลี่" : "พับ";
+    $("#t3Fold").title = st.folded ? "คลี่กลับเป็นแผ่นเรียบ" : "พับตามแบบทีละรอย (#1, #2, ...)";
+    $("#t3Prog").value = st.n ? Math.round((st.T / st.n) * 1000) : 0;
+    const sub = $("#stageTitle small");
+    if (sub && S.sel && S.sel.kind === "part") {
+      const p = part(S.sel.id);
+      const state = st.flat ? "3D แบบคลี่ (แผ่นเรียบ)" : st.folded ? "3D พับแล้ว" : st.current ? `กำลังพับ #${st.current.n}` : "3D พับบางส่วน";
+      sub.textContent = `${state} · ${st.n} รอยพับ · หนา ${fmt(p.thickness.used, 2)} มม.`;
+    }
   });
   v3.setColors(colors3d());
   return v3;
@@ -1064,13 +1080,24 @@ async function show3d(p) {
   $("#stInfo").textContent = "กำลังโหลดโมเดล 3D…";
   try {
     const viewer = await ensure3d();
-    const key = "mesh:" + p.id;
-    let m = S.meshCache.get(key);
-    if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/mesh`); S.meshCache.set(key, m); }
-    if (S.sel !== sel) return;
-    const s = m.bbox[1].map((v, i) => v - m.bbox[0][i]);
-    $("#stageTitle").innerHTML = `${esc(p.name)}<small>3D พับแล้ว · ${fmt(s[0], 1)} × ${fmt(s[1], 1)} × ${fmt(s[2], 1)} มม.${m.t ? ` · หนา ${fmt(m.t, 2)} มม.` : ""}</small>`;
-    viewer.resize(); viewer.load(m);
+    if (p.flat) {
+      // sheet part: built from the flat pattern, shown flat first, "พับ" folds it
+      const key = "fold:" + p.id + ":" + S.version;
+      let m = S.cache.get(key);
+      if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/fold`); S.cache.set(key, m); }
+      if (S.sel !== sel) return;
+      $("#stageTitle").innerHTML = `${esc(p.name)}<small></small>`;
+      viewer.resize(); viewer.loadFold(m);
+    } else {
+      // no flat pattern (bolt, tube ...): the solid as modelled
+      const key = "mesh:" + p.id;
+      let m = S.meshCache.get(key);
+      if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/mesh`); S.meshCache.set(key, m); }
+      if (S.sel !== sel) return;
+      const s = m.bbox[1].map((v, i) => v - m.bbox[0][i]);
+      $("#stageTitle").innerHTML = `${esc(p.name)}<small>3D ตามโมเดล · ${fmt(s[0], 1)} × ${fmt(s[1], 1)} × ${fmt(s[2], 1)} มม.</small>`;
+      viewer.resize(); viewer.load(m);
+    }
     $("#stZoom").textContent = "";
     $("#stInfo").textContent = "ลากเพื่อหมุน · คลิกขวาลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ชี้ที่ขอบเพื่อดูความยาว";
   } catch (e) {
@@ -1375,7 +1402,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#v2d").onclick = () => setView3d(false);
   $("#v3d").onclick = () => setView3d(true);
   $("#t3Fit").onclick = () => v3 && v3.fit();
-  $("#t3Dim").onclick = () => { if (!v3) return; const on = !v3.showDims; v3.setDims(on); $("#t3Dim").setAttribute("aria-pressed", String(on)); };
+  const tog3 = (id, key) => { $(id).onclick = () => { if (!v3) return; const on = !v3.show[key]; v3.setShow(key, on); $(id).setAttribute("aria-pressed", String(on)); }; };
+  tog3("#t3Dim", "size"); tog3("#t3Ang", "angle"); tog3("#t3Len", "len"); tog3("#t3Hole", "hole");
+  $("#t3Fold").onclick = () => { if (!v3 || !v3.F) return; if (v3.F.T >= v3.F.n - 1e-9) v3.unfold(); else v3.fold(); };
+  $("#t3Prog").addEventListener("input", (e) => v3 && v3.scrub(+e.target.value / 1000));
   document.querySelectorAll("[data-view3]").forEach((b) => (b.onclick = () => v3 && v3.view(b.dataset.view3)));
   $("#tBend").onclick = () => toggleOpt("bend"); $("#tDim").onclick = () => toggleOpt("dim");
   $("#tName").onclick = () => toggleOpt("name"); $("#tMeasure").onclick = () => toggleOpt("measure");

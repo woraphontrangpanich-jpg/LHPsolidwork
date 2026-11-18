@@ -63,6 +63,7 @@ class PartRecord:
     plate: bool = False                   # plated (ชุบ)
     shape: object = None                  # the OpenCASCADE solid (for the 3D view)
     mesh: dict | None = None              # cached 3D mesh
+    fold: tuple | None = None             # cached fold model (flat_key, data)
     # computed
     pieces: list[FlatPiece] = field(default_factory=list)
     unfold_error: str = ""
@@ -584,6 +585,16 @@ class Project:
                         "cut_pieces": cut_pieces, "excluded_unique": len(excl),
                         "excluded_pieces": total_pieces - cut_pieces},
         }
+
+    def fold_json(self, rec: PartRecord) -> dict:
+        """Flat pattern split into flanges and bend zones, for the 3D fold animation."""
+        from .fold import fold_model
+        if not rec.pieces:
+            raise ValueError("ชิ้นนี้ไม่มีแบบคลี่")
+        if rec.fold is None or rec.fold[0] != rec.flat_key:
+            t = rec.thickness_used(self.profile)
+            rec.fold = (rec.flat_key, [fold_model(pc, t) for pc in rec.pieces])
+        return {"id": rec.id, "name": rec.name, "t": rec.thickness_used(self.profile), "pieces": rec.fold[1]}
 
     def mesh_json(self, rec: PartRecord) -> dict:
         """3D view of the part as modelled (folded): triangles, edge lines, bounding box, thickness."""
