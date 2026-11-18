@@ -133,23 +133,25 @@ def build_pricing_xlsx(project) -> bytes:
     _put(N, (r, 1), "เผื่อที่ clamp & วางแบบ อยู่ที่ช่อง R2 ของหน้ารายละเอียด", font=F_CELL, border=None)
 
     # ================================================================ ราคาเหล็ก
+    # One row per steel and thickness. Price per kg and the weight of a 1220x2440 sheet AT THAT THICKNESS;
+    # the price of each sheet size follows from them. No per-1-mm values.
     sheets = P["sheets"]
     nS = len(sheets)
     R.sheet_view.zoomScale = 85
-    for col, w in zip("ABC", (13.7, 28.0, 16.3)):
+    for col, w in zip("ABCD", (14, 14, 16.3, 22)):
         R.column_dimensions[col].width = w
-    for i in range(nS + 1):
-        R.column_dimensions[COL(4 + i)].width = 15.4
+    for i in range(nS):
+        R.column_dimensions[COL(5 + i)].width = 15.4
     R.row_dimensions[1].height = R.row_dimensions[2].height = 33
-    big = Font(name=ANG, size=22, bold=True)
-    _head(R, (1, 4), "ราคาต่อแผ่น (หนา 1 มม.)", font=big, merge=f"D1:{COL(3 + nS)}1")
+    big = Font(name=ANG, size=20, bold=True)
+    mid = Font(name=ANG, size=16, bold=True)
+    _head(R, (1, 5), "ราคาต่อแผ่น (ที่ความหนาของแถว)", font=big, merge=f"E1:{COL(4 + nS)}1")
     _head(R, "A2", "Material", font=big)
-    _head(R, "B2", "น้ำหนัก/ตารางมิลลิเมตร", font=big)
-    _head(R, "C2", "ราคา/กิโลกรัม", font=big, fill=YELLOW)
-    for i, s in enumerate(sheets):
-        _put(R, (2, 4 + i), sheet_key(s), align=CENTER, border=HBOX, fill=None if s["on"] else GREY2)
-    tcol = 4 + nS
-    _head(R, (2, tcol), "ความหนา (มม.)", font=Font(name=ANG, size=16, bold=True))
+    _head(R, "B2", "ความหนา (มม.)", font=mid)
+    _head(R, "C2", "ราคา/กิโลกรัม", font=mid, fill=YELLOW)
+    _head(R, "D2", "น้ำหนักแผ่น 1220x2440 (กก.)", font=mid, fill=YELLOW)
+    for i, s_ in enumerate(sheets):
+        _put(R, (2, 5 + i), sheet_key(s_), font=F_NUMB, align=CENTER, border=HBOX, fill=None if s_["on"] else GREY2)
     row_of = {}
     pr_ = 3
     rowfont = Font(name=ANG, size=18)
@@ -158,21 +160,21 @@ def build_pricing_xlsx(project) -> bytes:
         row_of[(p["material"], round(p["thickness"], 3))] = pr_
         R.row_dimensions[pr_].height = 25.8
         _put(R, (pr_, 1), code, font=rowfont, align=Alignment(horizontal="center", vertical="center"))
-        _put(R, (pr_, 2), f"={p['kg_sheet']:g}/(1220*2440)", font=rowfont, fmt=KGFMT)
-        _put(R, (pr_, 3), p["price_kg"], font=rowfont, fill=YELLOW)
+        _put(R, (pr_, 2), p["thickness"], font=rowfont, align=Alignment(horizontal="center", vertical="center"))
+        _put(R, (pr_, 3), p["price_kg"], font=rowfont, fill=YELLOW, fmt=ACC2)
+        _put(R, (pr_, 4), p["kg_plate"], font=rowfont, fill=YELLOW, fmt="0.00")
         for i in range(nS):
-            L = COL(4 + i)
-            _put(R, (pr_, 4 + i), f'=ROUNDUP(LEFT({L}$2,FIND("x",{L}$2)-1)*MID({L}$2,FIND("x",{L}$2)+1,9)*$B{pr_}*$C{pr_},0)',
+            L = COL(5 + i)
+            _put(R, (pr_, 5 + i), f'=ROUNDUP($D{pr_}/(1220*2440)*LEFT({L}$2,FIND("x",{L}$2)-1)*MID({L}$2,FIND("x",{L}$2)+1,9)*$C{pr_},0)',
                  fmt=ACC0, align=Alignment(horizontal="center"))
-        _put(R, (pr_, tcol), p["thickness"], font=rowfont, align=Alignment(horizontal="center"))
         pr_ += 1
     last_price = max(3, pr_ - 1)
-    lc = COL(3 + nS)
-    _put(R, (pr_ + 1, 1), "ราคาแผ่นจริง = ราคาต่อแผ่น (หนา 1 มม.) × ความหนา · น้ำหนัก = กก. ของแผ่น 1220x2440 หนา 1 มม. หาร (1220*2440)",
-         font=F_CELL, border=None)
+    lc = COL(4 + nS)
+    _put(R, (pr_ + 1, 1), ("ราคาต่อแผ่น = น้ำหนักแผ่นที่ความหนานั้น × (ขนาดแผ่น ÷ 1220x2440) × ราคา/กก. ปัดขึ้น · "
+                           "แก้ราคา/กก. หรือน้ำหนักในช่องสีเหลืองได้ ทั้งไฟล์จะคำนวณใหม่"), font=F_CELL, border=None)
     TBL = f"{PRICES}!$A$3:${lc}${last_price}"
     HDR = f"{PRICES}!$A$2:${lc}$2"
-    KG = f"{PRICES}!$A$3:$B${last_price}"
+    KG = f"{PRICES}!$A$3:$D${last_price}"
 
     # ================================================================ รายละเอียด (main sheet of the workbook)
     widths = {"A": 10.9, "B": 11, "C": 8.6, "D": 10, "E": 10, "F": 11.4, "G": 12.7, "H": 10, "I": 9, "J": 8.9, "K": 8,
@@ -183,8 +185,9 @@ def build_pricing_xlsx(project) -> bytes:
     extras = [(k, e) for k, e in enumerate(P["extras"]) if e["unit"] != "job"]
     ex0 = 29                                                         # AC
     ex_total = ex0 + len(extras)
-    note_col = ex_total + 1
-    for i in range(len(extras) + 2):
+    use_col = ex_total + 1                                           # ใช้เนื้อแผ่น %, เศษ %, ใช้กี่แผ่น
+    note_col = use_col + 3
+    for i in range(len(extras) + 5):
         D.column_dimensions[COL(ex0 + i)].width = 12
     D.column_dimensions[COL(note_col)].width = 40
     _put(D, "A1", f"ใบคิดราคา {project.job_name}", font=Font(name=ANG, size=18, bold=True), border=None)
@@ -219,6 +222,10 @@ def build_pricing_xlsx(project) -> bytes:
         L = COL(ex0 + i)
         _head(D, f"{L}4", f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})", fill=GREY, merge=f"{L}4:{L}5")
     _head(D, f"{COL(ex_total)}4", "ค่าใช้จ่ายอื่น\n/ชิ้น", fill=GREY, merge=f"{COL(ex_total)}4:{COL(ex_total)}5")
+    _head(D, f"{COL(use_col)}4", "การใช้แผ่นเหล็ก", fill=GREY, merge=f"{COL(use_col)}4:{COL(use_col + 2)}4")
+    _head(D, f"{COL(use_col)}5", "ใช้ (%)", fill=GREY)
+    _head(D, f"{COL(use_col + 1)}5", "เศษเหลือ (%)", fill=GREY)
+    _head(D, f"{COL(use_col + 2)}5", "ใช้ (แผ่น)", fill=GREY)
     _head(D, f"{COL(note_col)}4", "หมายเหตุ", merge=f"{COL(note_col)}4:{COL(note_col)}5")
     D.freeze_panes = "B6"
 
@@ -245,12 +252,12 @@ def build_pricing_xlsx(project) -> bytes:
             r += 1
             continue
         _put(D, (r, 6), sheet_key(sh), fill=GREY, align=CENTER)
-        _put(D, (r, 7), f'=IFERROR(IF(AND(F{r}<>"",B{r}<>""),VLOOKUP(B{r},{TBL},MATCH(F{r},{HDR},0),FALSE)*C{r},""),"")', fill=GREY, fmt=ACC0)
+        _put(D, (r, 7), f'=IFERROR(IF(AND(F{r}<>"",B{r}<>""),VLOOKUP(B{r},{TBL},MATCH(F{r},{HDR},0),FALSE),""),"")', fill=GREY, fmt=ACC0)
         _put(D, (r, 8), f'=IFERROR(ROUNDUP(G{r}/MAX(T{r},W{r}),0),"")', fill=GREY, fmt=ACC0)
         nopaint = row["material"] in P["no_paint"]
         _put(D, (r, 9), 0 if nopaint else f'=IF(OR(D{r}="",E{r}=""),"",ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))', fill=GREY, fmt=ACC0)
         _put(D, (r, 10), f'=IF(L{r}="","",L{r}*{cell["plating"]})', fill=GREY, fmt=ACC0)
-        _put(D, (r, 12), f'=IFERROR(VLOOKUP(B{r},{KG},2,FALSE)*C{r}*D{r}*E{r}*K{r},"")', fill=GREY, fmt=ACC2)
+        _put(D, (r, 12), f'=IFERROR(VLOOKUP(B{r},{KG},4,FALSE)/(1220*2440)*D{r}*E{r}*K{r},"")', fill=GREY, fmt=ACC2)
         _put(D, (r, 13), f'=SUM(H{r}:I{r})*K{r}+{EXT}{r}*K{r}+IF({cell["incplate"]}=1,J{r},0)', fill=GOLD, fmt=ACC0)
         _put(D, (r, 14), None, fill=GREY2, fmt=ACC0)
         _put(D, (r, 15), f'=IF(N{r}="","",(IFERROR(ROUNDUP(N{r}/MAX(T{r},W{r}),0),"")+ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))*K{r})',
@@ -271,6 +278,10 @@ def build_pricing_xlsx(project) -> bytes:
                         "m2": f"D{r}*E{r}/1000000"}[e["unit"]]
             _put(D, (r, ex0 + i), f"=IF({on}=1,{rate}*{qty_expr},0)", fill=GREY, fmt=ACC2)
         _put(D, (r, ex_total), f"=SUM({COL(ex0)}{r}:{COL(ex_total - 1)}{r})" if extras else 0, fill=GREY, fmt=ACC2)
+        U, Ux, Un = COL(use_col), COL(use_col + 1), COL(use_col + 2)
+        _put(D, (r, use_col), f'=IFERROR(MAX(T{r},W{r})*D{r}*E{r}/({W_}*{L_}),"")', fill=GREY, fmt="0.0%")
+        _put(D, (r, use_col + 1), f'=IFERROR(1-{U}{r},"")', fill=GREY, fmt="0.0%")
+        _put(D, (r, use_col + 2), f'=IFERROR(K{r}/MAX(T{r},W{r}),"")', fill=GREY, fmt="0.000")
         _put(D, (r, note_col), "", font=F_CELL)
         r += 1
     last = r - 1
@@ -295,11 +306,12 @@ def build_pricing_xlsx(project) -> bytes:
             f"AND(IF(T{first}>=W{first}, (S{first}+1)*(E{first}+$R$2),(V{first}+1)*(D{first}+$R$2))<={lx}+10,IF(T{first}>=W{first},E{first},D{first})>=100)"],
             fill=PatternFill("solid", bgColor="FF9999")))
     _put(D, (total_row + 2, 1), ("แผ่นที่ใช้ = ขนาดที่ SheetFlat เลือก (ลองทุกขนาดที่มี ทั้งเรียงแบบ 1 และ 2 แล้วเลือกที่ค่าโลหะต่อชิ้นถูกที่สุด) "
-                                 "· ช่องสีฟ้า = แบบที่วางได้มากกว่า · ใส่ราคาเทียบในช่อง N ได้เหมือนเดิม"), font=F_CELL, border=None)
+                                 "· ช่องสีฟ้า = แบบที่วางได้มากกว่า · ใส่ราคาเทียบในช่อง N ได้เหมือนเดิม "
+                                 "· การใช้แผ่นเหล็ก: ใช้ (%) = ชิ้นต่อแผ่น × X × Y ÷ พื้นที่แผ่น, ใช้ (แผ่น) = จำนวน ÷ ชิ้นต่อแผ่น"), font=F_CELL, border=None)
 
     # ================================================================ สรุป (first page)
     S.sheet_view.showGridLines = False
-    for col, w in zip("ABCDEFGHIJK", (16, 14, 12, 12, 14, 14, 14, 16, 12, 16, 26)):
+    for col, w in zip("ABCDEFGHIJKL", (22, 14, 12, 14, 14, 14, 14, 14, 14, 24, 14, 14)):
         S.column_dimensions[col].width = w
     _put(S, "A1", "ใบคิดราคา", font=F_TITLE, border=None)
     info = [("ชื่องาน", project.job_name), ("ลูกค้า", meta.get("customer", "")), ("วันที่", date),
@@ -314,7 +326,7 @@ def build_pricing_xlsx(project) -> bytes:
     _put(S, (r, 1), "ราคาเหล็กที่ใช้ในงานนี้", font=F_H2, border=None)
     r += 1
     on_sheets = [(i, s) for i, s in enumerate(sheets) if s["on"]]
-    heads = ["วัตถุดิบ", "ความหนา (มม.)", "ราคา/กก."] + [f"ราคาแผ่น {sheet_key(s)}" for _, s in on_sheets]
+    heads = ["วัตถุดิบ", "ความหนา (มม.)", "ราคา/กก.", "น้ำหนักแผ่น 1220x2440"] + [f"ราคาแผ่น {sheet_key(s)}" for _, s in on_sheets]
     for i, h in enumerate(heads):
         _head(S, (r, 1 + i), h, fill=GREY2)
     r += 1
@@ -328,15 +340,16 @@ def build_pricing_xlsx(project) -> bytes:
         _put(S, (r, 1), f"={PRICES}!A{prow}" if prow else f"{mid}", font=F_CELL, align=CENTER)
         _put(S, (r, 2), t, font=F_CELL, align=CENTER)
         _put(S, (r, 3), f"={PRICES}!C{prow}" if prow else None, fmt=ACC2)
+        _put(S, (r, 4), f"={PRICES}!D{prow}" if prow else None, fmt="0.00")
         for j, (i, s) in enumerate(on_sheets):
-            _put(S, (r, 4 + j), f"={PRICES}!{COL(4 + i)}{prow}*B{r}" if prow else None, fmt=ACC0)
+            _put(S, (r, 5 + j), f"={PRICES}!{COL(5 + i)}{prow}" if prow else None, fmt=ACC0)
         r += 1
-    _put(S, (r, 1), "ราคาแผ่น = ราคาต่อแผ่นหนา 1 มม. ในหน้า ราคาเหล็ก × ความหนา", font=F_CELL, border=None)
+    _put(S, (r, 1), "ราคาและน้ำหนักเป็นของแผ่นที่ความหนานั้น (แก้ได้ในหน้า ราคาเหล็ก)", font=F_CELL, border=None)
     r += 2
     _put(S, (r, 1), "สรุปราคาแยกตามวัตถุดิบ", font=F_H2, border=None)
     r += 1
     heads = ["กลุ่ม / วัตถุดิบ", "ความหนา (มม.)", "จำนวนชิ้น", "น้ำหนัก (กก.)", "ค่าโลหะ", "ค่าสี", "ค่าใช้จ่ายอื่น", "ค่าชุบ",
-             "ราคารวม", "แผ่นที่ใช้ (ประมาณ)"]
+             "ราคารวม", "แผ่นที่ต้องใช้", "ใช้เนื้อแผ่น (%)", "เศษเหลือ (%)"]
     for i, h in enumerate(heads):
         _head(S, (r, 1 + i), h, fill=GOLD if h == "ราคารวม" else GREY2)
     r += 1
@@ -355,6 +368,8 @@ def build_pricing_xlsx(project) -> bytes:
         _put(S, (r, 8), f"=SUMIF({rng('B')},{code},{rng('J')})", fmt=ACC2)
         _put(S, (r, 9), f"=SUMIF({rng('B')},{code},{rng('M')})", fill=GOLD, fmt=ACC2)
         _put(S, (r, 10), ", ".join(f"{k} × {v}" for k, v in g["sheets"].items()) or "-", font=F_CELL)
+        _put(S, (r, 11), g["use"], fmt="0.0%")
+        _put(S, (r, 12), (1 - g["use"]) if g["sheet_area"] else None, fmt="0.0%")
         r += 1
     g1 = r - 1
     job_rows = []

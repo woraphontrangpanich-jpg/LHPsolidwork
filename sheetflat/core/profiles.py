@@ -41,8 +41,8 @@ DEFAULT_PROFILE = {
     "id": "factory",
     "name": "มาตรฐานโรงงาน (ตามตารางค่ายืด)",
     "k_factor": 0.5,
-    "angle_tol": 1.0,          # deg: |angle-90| <= this -> right angle
-    "table_max_ratio": 3.0,    # r_in / t above this -> curved bend -> K-factor
+    "angle_tol": 0.0,          # deg: |angle-90| <= this -> right angle (the table is for 90 deg only)
+    "table_max_r": 0.2,        # mm: the table is used for bends with inner radius up to this (shop tooling R 0.2)
     "jog_use_k": True,         # opposite bends with a very short flat between them (jog) -> K-factor
     "match_tol": 0.06,         # mm: measured thickness within this of a table row -> that row
     "simplify_bends": True,    # curved cut edges inside bend zones -> straight lines (SolidWorks default)
@@ -51,10 +51,10 @@ DEFAULT_PROFILE = {
 
 # Price list (the "ราคาเหล็ก" sheet of the shop's สูตรคิดราคา workbook), one row per steel and
 # bend-table thickness, keyed like the DXF files (ZN#22, ZN#3mm, ST#14 ...).
-#   kg_sheet  weight of a 1220 x 2440 sheet at 1 mm (the workbook: ZN 24 kg -> =24/(1220*2440) kg per mm2)
+#   kg_plate  weight of one 1220 x 2440 sheet AT THIS ROW'S THICKNESS (ZN 0.7 mm = 16.8 kg)
 #   price_kg  baht per kg
 # Rows are added automatically for every steel x thickness in the bend table (and in the job).
-STEEL_DEFAULTS = {          # first price for a new row: (price/kg below 3 mm, from 3 mm, kg per 1220x2440x1)
+STEEL_DEFAULTS = {          # first values for a new row: (price/kg below 3 mm, from 3 mm, kg of 1220x2440 sheet per mm)
     "ZN": (35, 45, 24), "ST": (45, 45, 24), "AL": (150, 150, 8), "SUS": (120, 120, 23),
 }
 EXTRA_UNITS = {             # how an extra cost is counted
@@ -113,7 +113,8 @@ def validate_pricing(p) -> dict:
         seen.add(key)
         prices.append({"material": m, "gauge": str(r.get("gauge") or "").strip(), "thickness": t,
                        "price_kg": max(0.0, float(r.get("price_kg") or 0)),
-                       "kg_sheet": max(0.0, float(r.get("kg_sheet") or _steel_default(m, t)[1]))})
+                       "kg_plate": round(max(0.0, float(r.get("kg_plate") or
+                                                        (float(r["kg_sheet"]) * t if r.get("kg_sheet") else _steel_default(m, t)[1] * t))), 4)})
     base["prices"] = prices
     for k in ("margin", "paint_per_m2", "plating_per_kg", "markup_pct"):
         base[k] = max(0.0, float(base[k] or 0))
@@ -150,12 +151,13 @@ def fill_price_rows(pricing: dict, profile: dict, materials: list, more: list | 
         same = [r for r in pricing["prices"] if r["material"] == mid]
         if same:
             near = min(same, key=lambda r: abs(r["thickness"] - t))
-            price, kg = near["price_kg"], near["kg_sheet"]
+            price, kg = near["price_kg"], near["kg_plate"] / near["thickness"]      # same steel, scaled to t
             if t >= 3 - 1e-9 > near["thickness"] and mid in STEEL_DEFAULTS:
                 price = _steel_default(mid, t)[0]
         else:
             price, kg = _steel_default(mid, t)
-        pricing["prices"].append({"material": mid, "gauge": gauge, "thickness": t, "price_kg": price, "kg_sheet": kg})
+        pricing["prices"].append({"material": mid, "gauge": gauge, "thickness": t, "price_kg": price,
+                                  "kg_plate": round(kg * t, 4)})
         have.add((mid, round(t, 3)))
         added = True
     order = {m["id"]: i for i, m in enumerate(materials)}
@@ -178,7 +180,7 @@ class ProfileStore:
 
     def _fresh(self):
         return {
-            "version": 1,
+            "version": 2,
             "active": "factory",
             "materials": copy.deepcopy(DEFAULT_MATERIALS),
             "profiles": [copy.deepcopy(DEFAULT_PROFILE)],
@@ -195,6 +197,16 @@ class ProfileStore:
                 base.update(d)
                 if not any(p["id"] == "factory" for p in base["profiles"]):
                     base["profiles"].insert(0, copy.deepcopy(DEFAULT_PROFILE))
+                if int(d.get("version", 1)) < 2:
+                    # v2 defaults: 90 deg means exactly 90 (+-0), table only for R in <= 0.2 mm.
+                    # Settings still at the old defaults move to the new ones; values the user changed stay.
+                    for p in base["profiles"]:
+                        if float(p.get("angle_tol", 1.0)) == 1.0:
+                            p["angle_tol"] = 0.0
+                        if "table_max_r" not in p:
+                            p["table_max_r"] = 0.2
+                        p.pop("table_max_ratio", None)
+                    base["version"] = 2
                 base["pricing"] = validate_pricing(base.get("pricing"))
                 return base
             except Exception:
@@ -240,8 +252,9 @@ def _validate_profile(p: dict):
     p["k_factor"] = float(p.get("k_factor", 0.5))
     if not 0.0 < p["k_factor"] < 1.0:
         raise ValueError("K-factor ต้องอยู่ระหว่าง 0 ถึง 1")
-    p["angle_tol"] = float(p.get("angle_tol", 1.0))
-    p["table_max_ratio"] = float(p.get("table_max_ratio", 3.0))
+    p["angle_tol"] = max(0.0, float(p.get("angle_tol", 0.0)))
+    p["table_max_r"] = max(0.0, float(p.get("table_max_r", 0.2)))
+    p.pop("table_max_ratio", None)
     p["jog_use_k"] = bool(p.get("jog_use_k", True))
     p["match_tol"] = float(p.get("match_tol", 0.06))
     p["simplify_bends"] = bool(p.get("simplify_bends", True))
@@ -306,8 +319,8 @@ def bend_model(profile: dict, thickness: float, k_override: float | None = None,
         thickness=t,
         k_factor=k_override if k_override is not None else profile["k_factor"],
         bd90=row["bd"] if row else None,
-        angle_tol_deg=profile.get("angle_tol", 1.0),
-        table_max_ratio=profile.get("table_max_ratio", 3.0),
+        angle_tol_deg=profile.get("angle_tol", 0.0),
+        table_max_r=profile.get("table_max_r", 0.2),
         jog_use_k=profile.get("jog_use_k", True),
         simplify_bends=profile.get("simplify_bends", True),
     )

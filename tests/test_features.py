@@ -126,7 +126,11 @@ def test_pricing_workbook(client, job):
         "NO.", "วัตถุดิบ", "SIZE", "แผ่นที่ใช้", "ค่าโลหะ", "ค่าสี", "ค่าชุบ", "จำนวน", "ราคารวม", "เรียงแบบ 1", "เรียงแบบ 2"]
     assert d["R2"].value == 20 and d["H6"].value == '=IFERROR(ROUNDUP(G6/MAX(T6,W6),0),"")'
     assert d["B6"].value.startswith("ZN#") and d["T6"].value == '=IFERROR(R6*S6,"")'
-    assert wb["ราคาเหล็ก"]["B3"].value == "=24/(1220*2440)"
+    pr = wb["ราคาเหล็ก"]
+    assert [pr[c].value for c in ("A2", "B2", "C2", "D2", "E2")] == [
+        "Material", "ความหนา (มม.)", "ราคา/กิโลกรัม", "น้ำหนักแผ่น 1220x2440 (กก.)", "1220x2440"]
+    assert pr["A3"].value == "ZN#22" and pr["B3"].value == 0.7 and pr["D3"].value == pytest.approx(16.8)
+    assert "*C6" not in d["G6"].value                                    # sheet price is already at this thickness
     assert "ราคา.xlsx" in " ".join(zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{jid}/export/all").content)).namelist())
 
 

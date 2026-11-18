@@ -53,8 +53,8 @@ def build_step(path: Path):
         return TopLoc_Location(t)
 
     parts = [
-        (named(shapes.bent_sheet(1.0, 380, 60, 90, 1.0, 420), "Side_Panel"), 2),
-        (named(shapes.bent_sheet(1.0, 300, 30, 90, 1.0, 380), "Back_Panel"), 1),
+        (named(shapes.bent_sheet(1.0, 380, 60, 90, 0.2, 420), "Side_Panel"), 2),
+        (named(shapes.bent_sheet(1.0, 300, 30, 90, 0.2, 380), "Back_Panel"), 1),
         (named(shapes.bent_sheet(1.0, 200, 120, 90, 25.0, 380), "Curved_Top"), 1),
         (named(shapes.bent_sheet(2.0, 60, 40, 45, 2.0, 50), "Bracket_45"), 4),
         (named(shapes.flat_plate(2.0, 380, 300, hole_d=40), "Base_Plate"), 1),

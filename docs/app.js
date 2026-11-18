@@ -1062,8 +1062,8 @@ function renderProfileDialog() {
     </tbody></table>
     <button type="button" class="btn small" id="pfMatAdd">เพิ่มชนิดเหล็ก</button>
     <details class="dlg-more"><summary>ตั้งค่าขั้นสูง</summary><div class="grid2">
-      <label>มุมที่ถือว่าเป็น 90° (± องศา)<input type="number" step="0.1" id="pfAng" value="${p.angle_tol}"></label>
-      <label>ใช้ตารางได้เมื่อ R ใน ≤ (× ความหนา)<input type="number" step="0.5" id="pfRat" value="${p.table_max_ratio}"></label>
+      <label>มุมที่ถือว่าเป็น 90° (± องศา, 0 = 90° พอดี)<input type="number" step="0.1" min="0" id="pfAng" value="${p.angle_tol}"></label>
+      <label>ใช้ตารางได้เมื่อ R ใน ≤ (มม.)<input type="number" step="0.05" min="0" id="pfRat" value="${p.table_max_r ?? 0.2}"></label>
       <label>จับคู่ความหนากับตารางได้ ± (มม.)<input type="number" step="0.01" id="pfMatch" value="${p.match_tol}"></label>
       <label class="switch" style="align-self:end"><input type="checkbox" id="pfJog" ${p.jog_use_k ? "checked" : ""}> รอยพับสลับทิศติดกัน (jog) ใช้ K-factor</label>
       <label class="switch" style="grid-column:1/3"><input type="checkbox" id="pfSimp" ${p.simplify_bends !== false ? "checked" : ""}> เส้นตัดโค้งที่พาดผ่านรอยพับ ทำเป็นเส้นตรง (เหมือน Simplify bends ของ SolidWorks)</label></div></details>`;
@@ -1080,7 +1080,7 @@ function syncProfile() {
   const d = editing, p = d.profiles.find((x) => x.id === d.cur); if (!p) return;
   p.name = $("#pfName").value.trim() || p.name; p.k_factor = +$("#pfK").value || 0.5;
   $("#pfRows").querySelectorAll("input,select").forEach((i) => { const r = p.table[+i.dataset.r]; const f = i.dataset.f; r[f] = f === "gauge" || f === "material" ? i.value.trim() : +i.value; });
-  p.angle_tol = +$("#pfAng").value || 1; p.table_max_ratio = +$("#pfRat").value || 3; p.match_tol = +$("#pfMatch").value || 0.06; p.jog_use_k = $("#pfJog").checked; p.simplify_bends = $("#pfSimp").checked;
+  p.angle_tol = Math.max(0, +$("#pfAng").value || 0); p.table_max_r = Math.max(0, +$("#pfRat").value || 0); delete p.table_max_ratio; p.match_tol = +$("#pfMatch").value || 0.06; p.jog_use_k = $("#pfJog").checked; p.simplify_bends = $("#pfSimp").checked;
   $("#pfMats").querySelectorAll("[data-m]").forEach((i) => { d.materials[+i.dataset.m][i.dataset.f] = i.value.trim(); });
   d.materials.forEach((m) => { if (m.id && !m.prefix) m.prefix = m.id; if (m.id && !m.name) m.name = m.id; });
 }
@@ -1119,8 +1119,9 @@ async function openPricing() {
   renderPriceForm(); renderPriceResult();
   $("#priceDlg").showModal();
 }
-/* price of a 1220 x 2440 sheet at this row's thickness - the workbook's ROUNDUP(weight x price) x thickness */
-const platePrice = (r) => Math.ceil(+(r.kg_sheet * r.price_kg).toFixed(9)) * r.thickness;
+/* price of a W x L sheet at this row's thickness: ROUNDUP(weight of that sheet x price per kg) */
+const REF_AREA = 1220 * 2440;
+const platePrice = (r, s) => Math.ceil(+(r.kg_plate / REF_AREA * s.w * s.l * r.price_kg).toFixed(9));
 function priceCode(r) { return r.gauge ? matPrefix(r.material) + r.gauge : `${matPrefix(r.material)}#${fmtG(r.thickness)}mm`; }
 function renderPriceForm() {
   const P = S.price.pricing, M = S.price.meta;
@@ -1128,14 +1129,15 @@ function renderPriceForm() {
   const used = new Set(S.price.groups.map((g) => g.material_id + "|" + g.thickness));
   const isUsed = (r) => [...used].some((k) => { const [m, t] = k.split("|"); return m === r.material && Math.abs(+t - r.thickness) < 0.061; });
   const shown = P.prices.map((r, i) => ({ r, i })).filter(({ r }) => S.priceAll || isUsed(r));
+  const onSheets = P.sheets.filter((s) => s.on && s.w > 0 && s.l > 0);
   let lastMat = null;
   const priceRows = shown.map(({ r, i }) => {
-    const head = r.material !== lastMat ? `<tr class="mat-row"><td colspan="5">${esc(matName(r.material))}</td></tr>` : "";
+    const head = r.material !== lastMat ? `<tr class="mat-row"><td colspan="${4 + onSheets.length}">${esc(matName(r.material))}</td></tr>` : "";
     lastMat = r.material;
     return head + `<tr class="${isUsed(r) ? "used" : ""}"><td><b>${esc(priceCode(r))}</b></td><td class="n">${fmtG(r.thickness)}</td>
       <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="price_kg" value="${r.price_kg}" aria-label="ราคาต่อกิโลกรัม ${esc(priceCode(r))}" ${dis}></td>
-      <td><input type="number" step="0.1" min="0" data-p="${i}" data-f="kg_plate" value="${+(r.kg_sheet * r.thickness).toFixed(2)}" aria-label="น้ำหนักแผ่น 4×8 ${esc(priceCode(r))}" ${dis}></td>
-      <td class="n plate-price" data-pp="${i}">${baht(platePrice(r))}</td></tr>`;
+      <td><input type="number" step="0.1" min="0" data-p="${i}" data-f="kg_plate" value="${+r.kg_plate.toFixed(2)}" aria-label="น้ำหนักแผ่น 1220×2440 ${esc(priceCode(r))}" ${dis}></td>
+      ${onSheets.map((s) => `<td class="n plate-price" data-pp="${i}" data-sw="${s.w}" data-sl="${s.l}">${baht(platePrice(r, s))}</td>`).join("")}</tr>`;
   }).join("");
   $("#priceBody").innerHTML = `
   <div class="price-grid">
@@ -1147,9 +1149,9 @@ function renderPriceForm() {
         <label style="grid-column:1/3">หมายเหตุ<input type="text" id="prNote" value="${esc(M.note)}" ${dis}></label>
       </div>
       <h3 class="dlg-h3">ราคาเหล็ก</h3>
-      <p class="hint">แยกตามชนิดเหล็กและความหนาในตารางค่ายืด · น้ำหนักและราคาเป็นของแผ่น 4×8 ฟุต (1220×2440) ที่ความหนาของแถวนั้น</p>
+      <p class="hint">แต่ละแถวคือเหล็กชนิดนั้นที่ความหนานั้น ใส่ราคาต่อ กก. และน้ำหนักแผ่น 1220×2440 ที่ความหนานั้น ราคาต่อแผ่นคำนวณให้</p>
       <label class="switch"><input type="checkbox" id="prAll" ${S.priceAll ? "checked" : ""}> แสดงทุกความหนา (ปกติแสดงเฉพาะที่ใช้ในงานนี้)</label>
-      <table class="pt price-pt"><thead><tr><th>วัตถุดิบ</th><th class="n">หนา (มม.)</th><th>บาท / กก.</th><th>น้ำหนักแผ่น 4×8 (กก.)</th><th class="n">ราคาแผ่น 4×8</th></tr></thead><tbody>${priceRows}</tbody></table>
+      <table class="pt price-pt"><thead><tr><th>วัตถุดิบ</th><th class="n">หนา (มม.)</th><th>ราคา / กก.</th><th>น้ำหนักแผ่น 1220×2440 (กก.)</th>${onSheets.map((s) => `<th class="n">ราคาต่อแผ่น ${s.w}×${s.l}</th>`).join("")}</tr></thead><tbody>${priceRows}</tbody></table>
       <h3 class="dlg-h3">ขนาดแผ่นเหล็กที่มี</h3>
       <p class="hint">โปรแกรมลองวางทุกขนาดที่ติ๊กไว้ ทั้งเรียงแบบ 1 และแบบ 2 (หมุน 90°) แล้วเลือกแบบที่ค่าโลหะต่อชิ้นถูกที่สุด</p>
       <div class="sheet-list">${P.sheets.map((s, i) => `<span class="sheet-chip"><label class="switch"><input type="checkbox" data-s="${i}" data-f="on" ${s.on ? "checked" : ""} aria-label="ใช้แผ่น ${s.w}x${s.l}" ${dis}></label>
@@ -1196,10 +1198,9 @@ function syncPrice() {
   const P = S.price.pricing, M = S.price.meta, body = $("#priceBody");
   M.date = $("#prDate").value; M.customer = $("#prCust").value; M.note = $("#prNote").value;
   body.querySelectorAll("[data-p]").forEach((i) => {
-    const r = P.prices[+i.dataset.p], v = +i.value || 0;
-    if (i.dataset.f === "kg_plate") r.kg_sheet = r.thickness ? v / r.thickness : 0;   // stored per 1 mm, like the workbook
-    else r[i.dataset.f] = v;
-    const pp = body.querySelector(`[data-pp="${i.dataset.p}"]`); if (pp) pp.textContent = baht(platePrice(r));
+    const r = P.prices[+i.dataset.p];
+    r[i.dataset.f] = +i.value || 0;
+    body.querySelectorAll(`[data-pp="${i.dataset.p}"]`).forEach((pp) => { pp.textContent = baht(platePrice(r, { w: +pp.dataset.sw, l: +pp.dataset.sl })); });
   });
   body.querySelectorAll("[data-s]").forEach((i) => { const s = P.sheets[+i.dataset.s]; s[i.dataset.f] = i.dataset.f === "on" ? i.checked : +i.value || 0; });
   body.querySelectorAll("[data-e]").forEach((i) => { const e = P.extras[+i.dataset.e], f = i.dataset.f; e[f] = f === "on" ? i.checked : f === "rate" ? +i.value || 0 : i.value; });
@@ -1226,11 +1227,11 @@ async function pushPrice(saveDefault) {
 function renderPriceResult() {
   const R = S.price, box = $("#priceResult"); if (!box) return;
   const g = R.groups.map((x) => `<tr><td><b>${esc(x.name || x.code)}</b>${x.name && x.name !== x.code ? `<small>${esc(x.code)}</small>` : ""}</td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.extra, 2)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
-    <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ประมาณ ${v} แผ่น`).join(", ") || "-"}</td></tr>`).join("") +
+    <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ${v} แผ่น`).join(", ") || "-"}${x.sheet_area ? ` · ใช้เนื้อแผ่น ${fmt(+(x.use * 100).toFixed(1), 1)}% เศษเหลือ ${fmt(100 - +(x.use * 100).toFixed(1), 1)}%` : ""}</td></tr>`).join("") +
     R.job_extras.map((e) => `<tr><td colspan="6">${esc(e.name)} <small>(ต่องาน)</small></td><td class="n"><b>${baht(e.amount, 2)}</b></td></tr>`).join("");
   const rows = R.rows.map((r) => r.error ? `<tr class="err"><td>${esc(r.name)}</td><td colspan="6">${esc(r.error)}</td></tr>` :
     `<tr><td>${esc(r.name)}<small>${esc(r.code)} · ${fmt(r.x, 1)} × ${fmt(r.y, 1)} มม.</small></td>
-      <td>${r.sheet.w}×${r.sheet.l}<small>เรียงแบบ ${r.sheet.arr}${r.sheet.arr === 2 ? " (หมุน 90°)" : ""} · ${r.sheet.nx}×${r.sheet.ny} = ${r.sheet.count} ชิ้น</small></td>
+      <td>${r.sheet.w}×${r.sheet.l}<small>เรียงแบบ ${r.sheet.arr}${r.sheet.arr === 2 ? " (หมุน 90°)" : ""} · ${r.sheet.nx}×${r.sheet.ny} = ${r.sheet.count} ชิ้น · ใช้ ${fmt(+(r.sheet.use * 100).toFixed(1), 1)}% เศษ ${fmt(100 - +(r.sheet.use * 100).toFixed(1), 1)}%</small></td>
       <td class="n">${baht(r.metal)}</td><td class="n">${baht(r.paint)}</td><td class="n">${baht(r.extra, r.extra % 1 ? 2 : 0)}</td><td class="n">${r.qty}</td><td class="n"><b>${baht(r.total, 2)}</b></td></tr>`).join("");
   box.innerHTML = `
     <div class="price-total"><span>ราคารวม${R.markup ? " (รวมบวกเพิ่ม)" : ""}</span><b>${baht(R.total, 2)}</b><small>บาท · เหล็ก ${fmt(R.weight, 2)} กก.${R.markup ? ` · บวกเพิ่ม ${baht(R.markup, 2)}` : ""}</small></div>

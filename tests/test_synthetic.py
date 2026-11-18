@@ -32,11 +32,11 @@ def flat_len(pr, name):
 
 
 def test_right_angle_uses_table(store):
-    # t=1.0 -> BD 1.75, r_in=1: outside dims a=L1+2, b=L2+2 ; flat = a+b-BD
+    # t=1.0 -> BD 1.75, r_in=0.2 (shop tooling): outside dims a=L1+1.2, b=L2+1.2 ; flat = a+b-BD
     L1, L2, W = 40.0, 25.0, 30.0
-    pr = run(store, [("L90", shapes.bent_sheet(1.0, L1, L2, 90, 1.0, W))])
+    pr = run(store, [("L90", shapes.bent_sheet(1.0, L1, L2, 90, 0.2, W))])
     p, long, short = flat_len(pr, "L90")
-    assert long == pytest.approx((L1 + 2.0) + (L2 + 2.0) - 1.75, abs=0.01)
+    assert long == pytest.approx((L1 + 1.2) + (L2 + 1.2) - 1.75, abs=0.01)
     assert short == pytest.approx(W, abs=0.01)
     assert p["flat"]["bends"][0]["method"] == "table"
     assert p["thickness"]["gauge"] == "#19" and p["code"] == "ZN#19"
@@ -69,9 +69,25 @@ def test_table_is_editable(store):
     for r in store.data["profiles"][0]["table"]:
         if r["thickness"] == 1.0:
             r["bd"] = 2.0
-    pr = run(store, [("L90", shapes.bent_sheet(1.0, 40, 25, 90, 1.0, 30))])
+    pr = run(store, [("L90", shapes.bent_sheet(1.0, 40, 25, 90, 0.2, 30))])
     _, long, _ = flat_len(pr, "L90")
-    assert long == pytest.approx(42 + 27 - 2.0, abs=0.01)
+    assert long == pytest.approx(41.2 + 26.2 - 2.0, abs=0.01)
+
+
+def test_table_only_for_shop_radius(store):
+    """Default rule: the table is for 90 deg bends with R in <= 0.2 mm; a bigger radius uses K = 0.5."""
+    import math
+    pr = run(store, [("R1", shapes.bent_sheet(1.0, 40, 25, 90, 1.0, 30))])
+    p, long, _ = flat_len(pr, "R1")
+    assert p["flat"]["bends"][0]["method"] == "k"
+    assert long == pytest.approx(40 + 25 + math.pi / 2 * (1.0 + 0.5 * 1.0), abs=0.01)
+
+
+def test_angle_tolerance_default_is_zero(store):
+    """89 deg is not a right angle any more (default +-0): K-factor, not the table."""
+    pr = run(store, [("A89", shapes.bent_sheet(1.0, 40, 25, 89, 0.2, 30))])
+    p, _, _ = flat_len(pr, "A89")
+    assert p["flat"]["bends"][0]["method"] == "k"
 
 
 def test_thickness_not_in_table_falls_back_to_k(store):

@@ -57,7 +57,7 @@ def write_nested_step(path):
         t.SetTranslation(gp_Vec(x, 0, 0))
         return TopLoc_Location(t)
 
-    bracket = st.AddShape(shapes.bent_sheet(1.0, 40, 25, 90, 1.0, 30), False)
+    bracket = st.AddShape(shapes.bent_sheet(1.0, 40, 25, 90, 0.2, 30), False)
     name(bracket, "Bracket")
     plate = st.AddShape(shapes.flat_plate(2.0, 80, 50, hole_d=10), False)
     name(plate, "Plate")
@@ -219,15 +219,15 @@ def test_every_bend_follows_the_rule(sample, nested):
                     th = math.radians(b.angle_deg)
                     if b.method == "table":
                         assert row is not None
-                        assert abs(b.angle_deg - 90) <= prof["angle_tol"]
-                        assert b.r_inner <= prof["table_max_ratio"] * t + 1e-9
+                        assert abs(b.angle_deg - 90) <= prof["angle_tol"] + 0.01
+                        assert b.r_inner <= prof["table_max_r"] + 0.005
                         assert b.bd == row["bd"]
                         assert b.ba == pytest.approx(2 * (b.r_inner + t) - row["bd"], abs=1e-9)
                     else:
                         assert b.ba == pytest.approx(th * (b.r_inner + prof["k_factor"] * t), abs=1e-9)
-                        is_right = abs(b.angle_deg - 90) <= prof["angle_tol"]
+                        is_right = abs(b.angle_deg - 90) <= prof["angle_tol"] + 0.01
                         # a right-angle bend may only use K when: no table row, big radius, or jog
-                        if is_right and row is not None and b.r_inner <= prof["table_max_ratio"] * t:
+                        if is_right and row is not None and b.r_inner <= prof["table_max_r"] + 0.005:
                             assert prof["jog_use_k"], f"{rec.name}: 90deg bend used K without reason"
 
 

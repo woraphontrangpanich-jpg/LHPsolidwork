@@ -159,7 +159,7 @@ class Project:
         prof = self.profile
         t = rec.thickness_used(prof)
         model = bend_model(prof, t, material_id=rec.material_id)
-        key = (prof["id"], rec.material_id, t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_ratio, model.jog_use_k,
+        key = (prof["id"], rec.material_id, t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_r, model.jog_use_k,
                model.simplify_bends,
                tuple(tuple((r["thickness"], r["bd"], r.get("material", "")) for r in prof["table"])))
         if rec.flat_key == key and (rec.pieces or rec.unfold_error):

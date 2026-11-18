@@ -2,12 +2,15 @@
 
 Per flat piece (x, y = flat size, t = thickness, qty), same formulas as the workbook columns:
 
-    G  sheet price  = ROUNDUP(W * L * kg_sheet/(1220*2440) * price_kg) * t     (price row of this steel + thickness)
+    G  sheet price  = ROUNDUP(kg_plate/(1220*2440) * W * L * price_kg)          (price row of this steel + thickness;
+                                                                                kg_plate = weight of a 1220x2440 sheet
+                                                                                at that thickness)
     T  arrangement 1 = floor(W / (x + m)) * floor(L / (y + m))
     W  arrangement 2 = floor(W / (y + m)) * floor(L / (x + m))                  (part turned 90 deg)
     H  metal        = ROUNDUP(G / MAX(T, W))                                    per piece
     I  paint        = ROUNDUP(x * y * paint_per_mm2)                            per piece, not for unpainted steel
-    L  weight       = kg_sheet/(1220*2440) * t * x * y * qty
+    L  weight       = kg_plate/(1220*2440) * x * y * qty
+       sheet use    = pieces on the sheet * x * y / (W * L)                     (rest = offcut)
     J  plating      = L * plating_per_kg                                        shown; in the total only when switched on
        extras       = user cost items per piece / bend / hole / kg / m2         (per job: added once)
     M  total        = (H + I + extras) * qty  [+ J]
@@ -44,12 +47,13 @@ def price_row(pricing: dict, material: str, t: float, tol: float = 0.06) -> dict
     return best[1] if best else None
 
 
-def kg_per_mm3(row: dict) -> float:
-    return row["kg_sheet"] / REF_AREA
+def kg_per_mm2(row: dict) -> float:
+    """kg per mm2 of sheet at the row's own thickness."""
+    return row["kg_plate"] / REF_AREA
 
 
-def sheet_price(sheet: dict, row: dict, t: float) -> float:
-    return roundup(sheet["w"] * sheet["l"] * kg_per_mm3(row) * row["price_kg"]) * t
+def sheet_price(sheet: dict, row: dict, t: float = 0.0) -> float:
+    return roundup(sheet["w"] * sheet["l"] * kg_per_mm2(row) * row["price_kg"])
 
 
 def fits(sheet: dict, x: float, y: float, margin: float) -> dict:
@@ -80,14 +84,15 @@ def price_piece(pricing: dict, material: str, t: float, x: float, y: float, qty:
     if row is None:
         out["error"] = f"ไม่มีราคาเหล็ก {material} หนา {t:g} มม. ในตารางราคา"
         return _zero(out)
-    out["price_kg"], out["kg_sheet"], out["gauge"] = row["price_kg"], row["kg_sheet"], row.get("gauge", "")
+    out["price_kg"], out["kg_plate"], out["gauge"] = row["price_kg"], row["kg_plate"], row.get("gauge", "")
     m = pricing["margin"]
     best = None
     for s in pricing["sheets"]:
         f = fits(s, x, y, m)
         sp = sheet_price(s, row, t)
         opt = {"w": s["w"], "l": s["l"], "on": s["on"], "sheet_price": round(sp, 2), **f,
-               "metal": roundup(sp / f["count"]) if f["count"] else None}
+               "metal": roundup(sp / f["count"]) if f["count"] else None,
+               "use": round(f["count"] * x * y / (s["w"] * s["l"]), 4)}
         out["options"].append(opt)
         if s["on"] and f["count"]:
             k = (opt["metal"], -(s["w"] * s["l"]))
@@ -97,8 +102,9 @@ def price_piece(pricing: dict, material: str, t: float, x: float, y: float, qty:
         out["error"] = f"ชิ้น {x:.0f} × {y:.0f} มม. ใหญ่กว่าแผ่นเหล็กทุกขนาดที่เปิดใช้"
         return _zero(out)
     b = best[1]
-    out["sheet"] = {k: b[k] for k in ("w", "l", "sheet_price", "count", "arr", "nx", "ny", "count1", "count2")}
-    weight1 = kg_per_mm3(row) * t * x * y
+    out["sheet"] = {k: b[k] for k in ("w", "l", "sheet_price", "count", "arr", "nx", "ny", "count1", "count2", "use")}
+    out["sheets_used"] = round(qty / b["count"], 4)                # fraction of sheets this part needs
+    weight1 = kg_per_mm2(row) * x * y
     out["metal"] = b["metal"]
     out["paint"] = 0 if material in pricing["no_paint"] else roundup(x * y * pricing["paint_per_m2"] * 1e-6)
     out["extras"] = [round(extra_amount(e, bends, holes, weight1, x, y), 4) for e in pricing["extras"]]
@@ -131,11 +137,15 @@ def price_project(pr, pricing: dict) -> dict:
                 r.update(part_id=rec.id, name=rec.name if len(rec.pieces) == 1 else f"{rec.name}-{k + 1}",
                          group=g.id, code=g.code, group_name=g.name)
                 grows.append(r)
-        sheets_needed = {}
+        sheets_needed, size_of = {}, {}
         for r in grows:
             if r["sheet"]:
                 key = f'{r["sheet"]["w"]:g}x{r["sheet"]["l"]:g}'
                 sheets_needed[key] = sheets_needed.get(key, 0.0) + r["qty"] / r["sheet"]["count"]
+                size_of[key] = r["sheet"]["w"] * r["sheet"]["l"]
+        sheet_count = {k: math.ceil(v - 1e-9) for k, v in sheets_needed.items()}
+        sheet_area = sum(sheet_count[k] * size_of[k] for k in sheet_count)
+        parts_area = sum(r["qty"] * r["x"] * r["y"] for r in grows if r["sheet"])
 
         def tot(k, per_piece=True, rows=grows):
             return round(sum(r[k] * (r["qty"] if per_piece else 1) for r in rows), 4)
@@ -143,7 +153,8 @@ def price_project(pr, pricing: dict) -> dict:
                        "pieces": sum(r["qty"] for r in grows), "weight": tot("weight", False),
                        "metal": tot("metal"), "paint": tot("paint"), "extra": tot("extra"),
                        "plating": tot("plating", False), "total": tot("total", False),
-                       "sheets": {k: math.ceil(v - 1e-9) for k, v in sheets_needed.items()},
+                       "sheets": sheet_count, "sheet_area": round(sheet_area, 1), "parts_area": round(parts_area, 1),
+                       "use": round(parts_area / sheet_area, 4) if sheet_area else 0,
                        "errors": sum(1 for r in grows if r["error"])})
         rows += grows
     job_extras = [{"name": e["name"], "amount": e["rate"]} for e in pricing["extras"] if e["on"] and e["unit"] == "job"]

@@ -356,7 +356,8 @@ def add_material(jid: str, body: dict):
             pricing["prices"] = [x for x in pricing["prices"] if not (x["material"] == mid and abs(x["thickness"] - r["thickness"]) < 1e-6)]
             pricing["prices"].append({"material": mid, "gauge": r["gauge"], "thickness": r["thickness"],
                                       "price_kg": price if price is not None else (near["price_kg"] if near else 35),
-                                      "kg_sheet": near["kg_sheet"] if near else 24})
+                                      "kg_plate": round(near["kg_plate"] / near["thickness"] * r["thickness"], 4) if near
+                                      else round(24 * r["thickness"], 4)})
     add_prices(data["pricing"])
     try:
         store.replace(data)

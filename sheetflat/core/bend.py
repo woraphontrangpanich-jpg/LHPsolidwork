@@ -23,13 +23,17 @@ import math
 from dataclasses import dataclass
 
 
+
+ANGLE_EPS = 0.01     # deg - model noise only; 89.99..90.01 is still a right angle
+R_EPS = 0.005        # mm
+
 @dataclass
 class BendModel:
     thickness: float
     k_factor: float = 0.5
     bd90: float | None = None             # table value for this thickness (None -> K-factor only)
-    angle_tol_deg: float = 1.0            # |angle-90| <= tol  -> counts as "right angle"
-    table_max_ratio: float = 3.0          # r_in/t above this -> treated as a curved bend (K-factor)
+    angle_tol_deg: float = 0.0            # |angle-90| <= tol (+ CAD noise) -> counts as "right angle"
+    table_max_r: float = 0.2              # mm: inner radius above this -> not the shop's tooling -> K-factor
     jog_use_k: bool = True                # two opposite bends separated by a very short flat (jog/step) -> K-factor
     jog_max_flat_ratio: float = 2.0       # "very short flat" = distance between tangent lines <= ratio * t
     simplify_bends: bool = True           # like SolidWorks "Simplify bends": curved cut edges inside a bend zone -> straight line
@@ -37,8 +41,8 @@ class BendModel:
     def allowance(self, theta: float, r_in: float, force_k: bool = False):
         """Return (ba, method, bd, k) for a bend of angle ``theta`` (rad) and inner radius ``r_in``."""
         t = self.thickness
-        right = abs(math.degrees(theta) - 90.0) <= self.angle_tol_deg
-        if self.bd90 is not None and right and not force_k and r_in <= self.table_max_ratio * t + 1e-9:
+        right = abs(math.degrees(theta) - 90.0) <= self.angle_tol_deg + ANGLE_EPS
+        if self.bd90 is not None and right and not force_k and r_in <= self.table_max_r + R_EPS:
             ba = 2.0 * (r_in + t) - self.bd90
             if ba > 0:
                 return ba, "table", self.bd90, None
