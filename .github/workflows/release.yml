@@ -30,7 +30,20 @@ jobs:
         env:
           SHEETFLAT_VERSION: ${{ github.ref_name }}
         run: python tools/build_portable.py --test
+      # the signing service (Sigstore) sometimes fails for a moment ("error fetching tlog entry"):
+      # try again once before giving up; the release is never published without an attestation
       - name: Attest build provenance
+        id: attest1
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/SheetFlat-windows.zip
+      - name: Wait before retrying the attestation
+        if: steps.attest1.outcome == 'failure'
+        shell: bash
+        run: sleep 30
+      - name: Attest build provenance (retry)
+        if: steps.attest1.outcome == 'failure'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/SheetFlat-windows.zip
