@@ -363,7 +363,10 @@ class Project:
 
     def price(self) -> dict:
         from .pricing import price_project
+        from .profiles import fill_price_rows
         with self.lock:
+            fill_price_rows(self.pricing, self.profile, self.store.data["materials"],
+                            [(g.material_id, g.thickness) for g in self.groups])
             out = price_project(self, self.pricing)
             out["pricing"] = self.pricing
             out["meta"] = self.pricing_meta

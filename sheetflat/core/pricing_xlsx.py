@@ -1,11 +1,16 @@
-"""Price workbook ("ใบคิดราคา"), laid out like the shop's สูตรคิดราคา workbook.
+"""Price workbook ("ใบคิดราคา") in the layout of the shop's สูตรคิดราคา_bank.xlsm, so it reads the same.
 
-Sheet 1  สรุปราคา      job details, date, the steel prices and costs used, totals per DXF group
-Sheet 2  รายละเอียด    one row per flat piece; every money cell is a live formula that reads the
-                        prices on sheet 1, so changing a price there updates the whole workbook
-Sheet 3  เทียบขนาดแผ่น  every sheet size x both arrangements for every piece, and which one was chosen
+    สรุป            first page: job, customer, date, steel prices used, totals per steel/thickness
+    รายละเอียด      the workbook's main sheet: same columns A..Y, same formulas, same colours and
+                    highlights (NO, วัตถุดิบ, ความหนา, SIZE X/Y, แผ่นที่ใช้, ค่าโลหะ, ค่าสี, ค่าชุบ, จำนวน,
+                    น้ำหนัก, ราคารวม, เทียบ, เรียงแบบ 1/2, Total Dimension, clamp margin in R2).
+                    Added on the right: part name, bends, holes and one column per extra cost.
+    ราคาเหล็ก       the workbook's price sheet: one row per steel + bend-table thickness (ZN#22, ZN#3mm ...)
+    ค่าแรงและอื่นๆ   the workbook's Note sheet as a table: extra costs, paint, plating, markup
+    เทียบขนาดแผ่น   every sheet size x both arrangements for every piece, and which one was chosen
 
-The sheet size and arrangement are chosen by SheetFlat (cheapest metal per piece) and written as values.
+Every money cell is a live formula reading ราคาเหล็ก / ค่าแรงและอื่นๆ, so a price changed there
+updates the whole workbook. The sheet size (column F) is SheetFlat's choice, written as a value.
 """
 from __future__ import annotations
 
@@ -13,256 +18,422 @@ import datetime
 import io
 
 from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter as COL
 
-F = "Tahoma"
-TITLE = Font(name=F, size=16, bold=True)
-H2 = Font(name=F, size=12, bold=True)
-BOLD = Font(name=F, size=10, bold=True)
-BASE = Font(name=F, size=10)
-HEAD_FILL = PatternFill("solid", fgColor="1F2A37")
-HEAD_FONT = Font(name=F, size=10, bold=True, color="FFFFFF")
-INPUT_FILL = PatternFill("solid", fgColor="FFF7D6")       # cells the user may change
-TOTAL_FILL = PatternFill("solid", fgColor="E4F3EA")
-ERR_FILL = PatternFill("solid", fgColor="FBE7E5")
-PICK_FILL = PatternFill("solid", fgColor="E0F1F3")
-THIN = Side(style="thin", color="C9CED6")
+from .profiles import EXTRA_UNITS
+
+# ---- the workbook's look (theme colours of the original, as RGB) ----
+ANG = "Angsana New"
+CAL = "Calibri"
+F_HEAD = Font(name=ANG, size=14, bold=True)
+F_CELL = Font(name=ANG, size=14)
+F_NUM = Font(name=CAL, size=11)
+F_NUMB = Font(name=CAL, size=11, bold=True)
+F_TITLE = Font(name=ANG, size=22, bold=True)
+F_H2 = Font(name=ANG, size=18, bold=True)
+YELLOW = PatternFill("solid", fgColor="FFFF00")      # input columns (วัตถุดิบ, ความหนา, X, Y, จำนวน)
+GREY = PatternFill("solid", fgColor="F2F2F2")        # formula columns
+GREY2 = PatternFill("solid", fgColor="D9D9D9")       # เทียบ columns
+GOLD = PatternFill("solid", fgColor="FFF2CC")        # ราคารวม
+BLUE = PatternFill("solid", fgColor="DEEBF7")        # chosen sheet in the comparison sheet
+CF_BLUE = PatternFill("solid", fgColor="DEEBF7", bgColor="DEEBF7")   # chosen arrangement (conditional format)
+SHEET_FILLS = ["C5E0B4", "F8CBAD", "BDD7EE", "E2EFDA", "FCE4D6"]
+RED = PatternFill("solid", fgColor="FF9999")
+ERR = PatternFill("solid", fgColor="FBE7E5")
+THIN = Side(style="thin")
+MED = Side(style="medium")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-MONEY = '#,##0.00'
-MONEY0 = '#,##0'
+HBOX = Border(left=MED, right=MED, top=MED, bottom=MED)
+CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+VCENTER = Alignment(vertical="center")
+ACC0 = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)'
+ACC2 = '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)'
+KGFMT = '_(* #,##0.0000000000000_);_(* \\(#,##0.0000000000000\\);_(* "-"??_);_(@_)'
+
+DETAIL = "รายละเอียด"
+PRICES = "ราคาเหล็ก"
+NOTE = "ค่าแรงและอื่นๆ"
 
 
-def _cell(ws, r, c, v, font=BASE, fill=None, fmt=None, align=None):
-    x = ws.cell(row=r, column=c, value=v)
-    x.font, x.border = font, BOX
+def _put(ws, ref, v, font=F_NUM, fill=None, fmt=None, align=VCENTER, border=BOX):
+    c = ws[ref] if isinstance(ref, str) else ws.cell(row=ref[0], column=ref[1])
+    c.value = v
+    c.font = font
+    if border:
+        c.border = border
     if fill:
-        x.fill = fill
+        c.fill = fill
     if fmt:
-        x.number_format = fmt
-    x.alignment = align or Alignment(vertical="center")
-    return x
+        c.number_format = fmt
+    c.alignment = align
+    return c
 
 
-def _head(ws, r, labels, c0=1):
-    for i, h in enumerate(labels):
-        x = ws.cell(row=r, column=c0 + i, value=h)
-        x.font, x.fill, x.border = HEAD_FONT, HEAD_FILL, BOX
-        x.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[r].height = 32
+def _head(ws, ref, v, fill=None, font=F_HEAD, merge=None):
+    if merge:
+        ws.merge_cells(merge)
+        for row in ws[merge]:
+            for c in row:
+                c.border = HBOX
+                if fill:
+                    c.fill = fill
+    _put(ws, ref, v, font=font, fill=fill, align=CENTER, border=HBOX)
 
 
-def _widths(ws, ws_widths):
-    for i, w in enumerate(ws_widths, 1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+def sheet_key(s) -> str:
+    return f"{s['w']:g}x{s['l']:g}"
 
 
 def build_pricing_xlsx(project) -> bytes:
     res = project.price()
     P, meta = res["pricing"], res["meta"]
+    mats = {m["id"]: m for m in project.store.data["materials"]}
     wb = Workbook()
     S = wb.active
-    S.title = "สรุปราคา"
-    D = wb.create_sheet("รายละเอียด")
+    S.title = "สรุป"
+    D = wb.create_sheet(DETAIL)
+    R = wb.create_sheet(PRICES)
+    N = wb.create_sheet(NOTE)
     C = wb.create_sheet("เทียบขนาดแผ่น")
-    sname = "สรุปราคา"
-    ref = lambda cell: f"'{sname}'!{cell}"  # noqa: E731
-
-    # ================================================================ sheet 1: header
-    _widths(S, [26, 14, 14, 14, 16, 16, 16, 16, 16, 16, 16])
-    S["A1"] = f"ใบคิดราคา {project.job_name}"
-    S["A1"].font = TITLE
     date = meta.get("date") or datetime.date.today().isoformat()
+
+    # ================================================================ ค่าแรงและอื่นๆ (Note sheet)
+    N.column_dimensions["A"].width = 34
+    N.column_dimensions["B"].width = 14
+    N.column_dimensions["C"].width = 14
+    N.column_dimensions["D"].width = 22
+    _put(N, "A1", "คิดค่าแรง / ค่าใช้จ่ายอื่น", font=F_H2, border=None)
+    _put(N, "A2", "แก้ตัวเลขช่องสีเหลืองได้ ราคาในหน้ารายละเอียดและหน้าสรุปจะคำนวณใหม่", font=F_CELL, border=None)
+    for i, h in enumerate(["รายการ", "อัตรา (บาท)", "คิดต่อ", "ใช้ (1 = คิด, 0 = ไม่คิด)"]):
+        _head(N, (4, 1 + i), h, fill=GREY2)
+    xr = {}
+    r = 5
+    for k, e in enumerate(P["extras"]):
+        _put(N, (r, 1), e["name"], font=F_CELL)
+        _put(N, (r, 2), e["rate"], fill=YELLOW, fmt=ACC2)
+        _put(N, (r, 3), EXTRA_UNITS[e["unit"]], font=F_CELL, align=CENTER)
+        _put(N, (r, 4), 1 if e["on"] else 0, fill=YELLOW, align=CENTER)
+        xr[k] = (f"'{NOTE}'!$B${r}", f"'{NOTE}'!$D${r}")
+        r += 1
+    r += 1
+    settings = [("paint", "ค่าสี (บาท / ตร.ม.)", P["paint_per_m2"]), ("plating", "ค่าชุบ (บาท / กก.)", P["plating_per_kg"]),
+                ("incplate", "รวมค่าชุบในราคารวม (1 = รวม, 0 = ไม่รวม)", 1 if P["include_plating"] else 0),
+                ("markup", "บวกเพิ่ม (%)", P["markup_pct"])]
+    cell = {}
+    for key, label, val in settings:
+        _put(N, (r, 1), label, font=F_CELL)
+        _put(N, (r, 2), val, fill=YELLOW, fmt=ACC2 if key != "incplate" else None)
+        cell[key] = f"'{NOTE}'!$B${r}"
+        r += 1
+    _put(N, (r, 1), "ไม่ทาสีกับเหล็ก", font=F_CELL)
+    _put(N, (r, 2), ", ".join(P["no_paint"]) or "-", font=F_CELL)
+    r += 2
+    _put(N, (r, 1), "เผื่อที่ clamp & วางแบบ อยู่ที่ช่อง R2 ของหน้ารายละเอียด", font=F_CELL, border=None)
+
+    # ================================================================ ราคาเหล็ก
+    sheets = P["sheets"]
+    nS = len(sheets)
+    R.sheet_view.zoomScale = 85
+    for col, w in zip("ABC", (13.7, 28.0, 16.3)):
+        R.column_dimensions[col].width = w
+    for i in range(nS + 1):
+        R.column_dimensions[COL(4 + i)].width = 15.4
+    R.row_dimensions[1].height = R.row_dimensions[2].height = 33
+    big = Font(name=ANG, size=22, bold=True)
+    _head(R, (1, 4), "ราคาต่อแผ่น (หนา 1 มม.)", font=big, merge=f"D1:{COL(3 + nS)}1")
+    _head(R, "A2", "Material", font=big)
+    _head(R, "B2", "น้ำหนัก/ตารางมิลลิเมตร", font=big)
+    _head(R, "C2", "ราคา/กิโลกรัม", font=big, fill=YELLOW)
+    for i, s in enumerate(sheets):
+        _put(R, (2, 4 + i), sheet_key(s), align=CENTER, border=HBOX, fill=None if s["on"] else GREY2)
+    tcol = 4 + nS
+    _head(R, (2, tcol), "ความหนา (มม.)", font=Font(name=ANG, size=16, bold=True))
+    row_of = {}
+    pr_ = 3
+    rowfont = Font(name=ANG, size=18)
+    for p in P["prices"]:
+        code = _code(mats, p)
+        row_of[(p["material"], round(p["thickness"], 3))] = pr_
+        R.row_dimensions[pr_].height = 25.8
+        _put(R, (pr_, 1), code, font=rowfont, align=Alignment(horizontal="center", vertical="center"))
+        _put(R, (pr_, 2), f"={p['kg_sheet']:g}/(1220*2440)", font=rowfont, fmt=KGFMT)
+        _put(R, (pr_, 3), p["price_kg"], font=rowfont, fill=YELLOW)
+        for i in range(nS):
+            L = COL(4 + i)
+            _put(R, (pr_, 4 + i), f'=ROUNDUP(LEFT({L}$2,FIND("x",{L}$2)-1)*MID({L}$2,FIND("x",{L}$2)+1,9)*$B{pr_}*$C{pr_},0)',
+                 fmt=ACC0, align=Alignment(horizontal="center"))
+        _put(R, (pr_, tcol), p["thickness"], font=rowfont, align=Alignment(horizontal="center"))
+        pr_ += 1
+    last_price = max(3, pr_ - 1)
+    lc = COL(3 + nS)
+    _put(R, (pr_ + 1, 1), "ราคาแผ่นจริง = ราคาต่อแผ่น (หนา 1 มม.) × ความหนา · น้ำหนัก = กก. ของแผ่น 1220x2440 หนา 1 มม. หาร (1220*2440)",
+         font=F_CELL, border=None)
+    TBL = f"{PRICES}!$A$3:${lc}${last_price}"
+    HDR = f"{PRICES}!$A$2:${lc}$2"
+    KG = f"{PRICES}!$A$3:$B${last_price}"
+
+    # ================================================================ รายละเอียด (main sheet of the workbook)
+    widths = {"A": 10.9, "B": 11, "C": 8.6, "D": 10, "E": 10, "F": 11.4, "G": 12.7, "H": 10, "I": 9, "J": 8.9, "K": 8,
+              "L": 8.9, "M": 11, "N": 11.7, "O": 8.9, "P": 3, "Q": 3, "R": 6, "S": 6, "T": 5.7, "U": 8.7, "V": 6,
+              "W": 5.7, "X": 10, "Y": 10, "Z": 26, "AA": 8, "AB": 8}
+    for k, v in widths.items():
+        D.column_dimensions[k].width = v
+    extras = [(k, e) for k, e in enumerate(P["extras"]) if e["unit"] != "job"]
+    ex0 = 29                                                         # AC
+    ex_total = ex0 + len(extras)
+    note_col = ex_total + 1
+    for i in range(len(extras) + 2):
+        D.column_dimensions[COL(ex0 + i)].width = 12
+    D.column_dimensions[COL(note_col)].width = 40
+    _put(D, "A1", f"ใบคิดราคา {project.job_name}", font=Font(name=ANG, size=18, bold=True), border=None)
+    _put(D, "A2", f"{meta.get('customer') or ''}  วันที่ {date}".strip(), font=F_CELL, border=None)
+    D.merge_cells("R1:T1")
+    D.merge_cells("R2:T2")
+    _put(D, "R1", "เผื่อที่ clamp & วางแบบ", font=F_NUMB, fill=GREY, align=CENTER, border=HBOX)
+    _put(D, "R2", P["margin"], align=CENTER, border=HBOX, fill=YELLOW)
+    D.row_dimensions[4].height = D.row_dimensions[5].height = 30
+    _head(D, "A4", "NO.", merge="A4:A5")
+    _head(D, "B4", "วัตถุดิบ", fill=YELLOW, merge="B4:B5")
+    _head(D, "C4", "ความหนา\nmm", fill=YELLOW, merge="C4:C5")
+    _head(D, "D4", "SIZE", merge="D4:E4")
+    _head(D, "D5", "X", fill=YELLOW)
+    _head(D, "E5", "Y", fill=YELLOW)
+    _head(D, "F4", "แผ่นที่ใช้", fill=GREY, font=F_NUMB, merge="F4:G4")
+    _head(D, "F5", "แผ่นที่ใช้", fill=GREY, font=F_NUMB)
+    _head(D, "G5", "ราคาต่อแผ่น", fill=GREY, font=F_NUMB)
+    for ref, label, fill in (("H", "ค่าโลหะ", GREY), ("I", "ค่าสี", GREY), ("J", "ค่าชุบ", GREY), ("K", "จำนวน", YELLOW),
+                             ("L", "น้ำหนัก\n(kg)", GREY), ("M", "ราคารวม", GOLD), ("N", "ราคาต่อแผ่น\n(เทียบ)", GREY2),
+                             ("O", "ราคารวม\n(เทียบ)", GREY2)):
+        _head(D, f"{ref}4", label, fill=fill, merge=f"{ref}4:{ref}5")
+    _head(D, "R4", "เรียงแบบ 1", fill=GREY, merge="R4:T4")
+    _head(D, "U4", "เรียงแบบ 2", fill=GREY, merge="U4:W4")
+    for ref, label in (("R5", "X"), ("S5", "Y"), ("T5", "จำนวน"), ("U5", "Y"), ("V5", "X"), ("W5", "จำนวน")):
+        _head(D, ref, label, fill=GREY)
+    _head(D, "X5", "Total Dimension", fill=GREY, merge="X5:Y5")
+    _head(D, "Z4", "ชิ้นส่วน", merge="Z4:Z5")
+    _head(D, "AA4", "จุดพับ", merge="AA4:AA5")
+    _head(D, "AB4", "รู", merge="AB4:AB5")
+    for i, (k, e) in enumerate(extras):
+        L = COL(ex0 + i)
+        _head(D, f"{L}4", f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})", fill=GREY, merge=f"{L}4:{L}5")
+    _head(D, f"{COL(ex_total)}4", "ค่าใช้จ่ายอื่น\n/ชิ้น", fill=GREY, merge=f"{COL(ex_total)}4:{COL(ex_total)}5")
+    _head(D, f"{COL(note_col)}4", "หมายเหตุ", merge=f"{COL(note_col)}4:{COL(note_col)}5")
+    D.freeze_panes = "B6"
+
+    first = 6
+    r = first
+    EXT = COL(ex_total)
+    for n, row in enumerate(res["rows"], 1):
+        sh = row["sheet"]
+        D.row_dimensions[r].height = 19.95
+        _put(D, (r, 1), n, font=F_CELL, align=CENTER)
+        _put(D, (r, 2), row["code"], font=F_CELL, align=CENTER)
+        _put(D, (r, 3), row["t"], font=F_CELL, align=CENTER)
+        _put(D, (r, 4), row["x"], font=F_CELL, fmt="0.00", align=CENTER)
+        _put(D, (r, 5), row["y"], font=F_CELL, fmt="0.00", align=CENTER)
+        _put(D, (r, 11), row["qty"], fmt=ACC0, align=CENTER)
+        _put(D, (r, 26), row["name"], font=F_CELL)
+        _put(D, (r, 27), row["bends"], align=CENTER)
+        _put(D, (r, 28), row["holes"], align=CENTER)
+        if sh is None:
+            _put(D, (r, 6), "ตรวจดู", fill=ERR, align=CENTER)
+            for c in (7, 8, 9, 10, 12, 13):
+                _put(D, (r, c), None, fill=ERR)
+            _put(D, (r, note_col), row["error"], font=F_CELL, fill=ERR)
+            r += 1
+            continue
+        _put(D, (r, 6), sheet_key(sh), fill=GREY, align=CENTER)
+        _put(D, (r, 7), f'=IFERROR(IF(AND(F{r}<>"",B{r}<>""),VLOOKUP(B{r},{TBL},MATCH(F{r},{HDR},0),FALSE)*C{r},""),"")', fill=GREY, fmt=ACC0)
+        _put(D, (r, 8), f'=IFERROR(ROUNDUP(G{r}/MAX(T{r},W{r}),0),"")', fill=GREY, fmt=ACC0)
+        nopaint = row["material"] in P["no_paint"]
+        _put(D, (r, 9), 0 if nopaint else f'=IF(OR(D{r}="",E{r}=""),"",ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))', fill=GREY, fmt=ACC0)
+        _put(D, (r, 10), f'=IF(L{r}="","",L{r}*{cell["plating"]})', fill=GREY, fmt=ACC0)
+        _put(D, (r, 12), f'=IFERROR(VLOOKUP(B{r},{KG},2,FALSE)*C{r}*D{r}*E{r}*K{r},"")', fill=GREY, fmt=ACC2)
+        _put(D, (r, 13), f'=SUM(H{r}:I{r})*K{r}+{EXT}{r}*K{r}+IF({cell["incplate"]}=1,J{r},0)', fill=GOLD, fmt=ACC0)
+        _put(D, (r, 14), None, fill=GREY2, fmt=ACC0)
+        _put(D, (r, 15), f'=IF(N{r}="","",(IFERROR(ROUNDUP(N{r}/MAX(T{r},W{r}),0),"")+ROUNDUP(D{r}*E{r}*{cell["paint"]}/1000000,0))*K{r})',
+             fill=GREY2, fmt=ACC0)
+        W_ = f'LEFT(F{r},FIND("x",F{r})-1)'
+        L_ = f'RIGHT(F{r},LEN(F{r})-FIND("x",F{r}))'
+        _put(D, (r, 18), f'=IF(F{r}<>"", ROUNDDOWN({W_}/(D{r}+$R$2),0),"")')
+        _put(D, (r, 19), f'=IF(F{r}<>"", ROUNDDOWN({L_}/(E{r}+$R$2),0),"")')
+        _put(D, (r, 20), f'=IFERROR(R{r}*S{r},"")')
+        _put(D, (r, 21), f'=IF(F{r}<>"", ROUNDDOWN({W_}/(E{r}+$R$2),0),"")')
+        _put(D, (r, 22), f'=IF(F{r}<>"", ROUNDDOWN({L_}/(D{r}+$R$2),0),"")')
+        _put(D, (r, 23), f'=IFERROR(U{r}*V{r},"")')
+        _put(D, (r, 24), f'=IFERROR(IF(T{r}>=W{r}, R{r}*(D{r}+$R$2),U{r}*(E{r}+$R$2)),"")', fmt="0")
+        _put(D, (r, 25), f'=IFERROR(IF(T{r}>=W{r}, S{r}*(E{r}+$R$2),V{r}*(D{r}+$R$2)),"")', fmt="0")
+        for i, (k, e) in enumerate(extras):
+            rate, on = xr[k]
+            qty_expr = {"piece": "1", "bend": f"AA{r}", "hole": f"AB{r}", "kg": f"L{r}/K{r}",
+                        "m2": f"D{r}*E{r}/1000000"}[e["unit"]]
+            _put(D, (r, ex0 + i), f"=IF({on}=1,{rate}*{qty_expr},0)", fill=GREY, fmt=ACC2)
+        _put(D, (r, ex_total), f"=SUM({COL(ex0)}{r}:{COL(ex_total - 1)}{r})" if extras else 0, fill=GREY, fmt=ACC2)
+        _put(D, (r, note_col), "", font=F_CELL)
+        r += 1
+    last = r - 1
+    # totals
+    _put(D, (r, 2), "รวม", font=F_HEAD, fill=GOLD, align=CENTER)
+    for c, fmt in ((11, ACC0), (12, ACC2), (13, ACC0)):
+        L = COL(c)
+        _put(D, (r, c), f"=SUM({L}{first}:{L}{last})" if last >= first else 0, font=F_NUMB, fill=GOLD, fmt=fmt)
+    total_row = r
+    if last >= first:
+        D.conditional_formatting.add(f"R{first}:T{last}", FormulaRule(formula=[f"$T{first}=MAX($T{first},$W{first})"], fill=CF_BLUE))
+        D.conditional_formatting.add(f"U{first}:W{last}", FormulaRule(formula=[f"$W{first}>$T{first}"], fill=CF_BLUE))
+        for i, s in enumerate(sheets):
+            D.conditional_formatting.add(f"F{first}:F{last}", FormulaRule(
+                formula=[f'$F{first}="{sheet_key(s)}"'], fill=PatternFill("solid", bgColor=SHEET_FILLS[i % len(SHEET_FILLS)])))
+        wx = f'VALUE(LEFT($F{first},FIND("x",$F{first})-1))'
+        lx = f'VALUE(MID($F{first},FIND("x",$F{first})+1,9))'
+        D.conditional_formatting.add(f"X{first}:X{last}", FormulaRule(formula=[
+            f"AND(IF(T{first}>=W{first}, (R{first}+1)*(D{first}+$R$2),(U{first}+1)*(E{first}+$R$2))<({wx}+10),IF(T{first}>=W{first},D{first},E{first})>=100)"],
+            fill=PatternFill("solid", bgColor="FF9999")))
+        D.conditional_formatting.add(f"Y{first}:Y{last}", FormulaRule(formula=[
+            f"AND(IF(T{first}>=W{first}, (S{first}+1)*(E{first}+$R$2),(V{first}+1)*(D{first}+$R$2))<={lx}+10,IF(T{first}>=W{first},E{first},D{first})>=100)"],
+            fill=PatternFill("solid", bgColor="FF9999")))
+    _put(D, (total_row + 2, 1), ("แผ่นที่ใช้ = ขนาดที่ SheetFlat เลือก (ลองทุกขนาดที่มี ทั้งเรียงแบบ 1 และ 2 แล้วเลือกที่ค่าโลหะต่อชิ้นถูกที่สุด) "
+                                 "· ช่องสีฟ้า = แบบที่วางได้มากกว่า · ใส่ราคาเทียบในช่อง N ได้เหมือนเดิม"), font=F_CELL, border=None)
+
+    # ================================================================ สรุป (first page)
+    S.sheet_view.showGridLines = False
+    for col, w in zip("ABCDEFGHIJK", (16, 14, 12, 12, 14, 14, 14, 16, 12, 16, 26)):
+        S.column_dimensions[col].width = w
+    _put(S, "A1", "ใบคิดราคา", font=F_TITLE, border=None)
     info = [("ชื่องาน", project.job_name), ("ลูกค้า", meta.get("customer", "")), ("วันที่", date),
             ("ไฟล์ต้นฉบับ", project.source_name), ("หมายเหตุ", meta.get("note", ""))]
     r = 3
     for k, v in info:
-        S.cell(row=r, column=1, value=k).font = BOLD
-        S.cell(row=r, column=2, value=v).font = BASE
+        _put(S, (r, 1), k, font=F_HEAD, border=None)
+        _put(S, (r, 2), v, font=F_CELL, border=None)
+        S.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
         r += 1
-
-    # ---------------------------------------------------------------- costs used
     r += 1
-    S.cell(row=r, column=1, value="ค่าใช้จ่ายที่ใช้คิด (แก้ช่องสีเหลืองได้ ราคาทั้งไฟล์จะคำนวณใหม่)").font = H2
+    _put(S, (r, 1), "ราคาเหล็กที่ใช้ในงานนี้", font=F_H2, border=None)
     r += 1
-    params = [
-        ("margin", "เผื่อที่ clamp และระยะวางแบบ (มม. ต่อชิ้น)", P["margin"]),
-        ("paint", "ค่าสี (บาท / ตร.ม.)", P["paint_per_m2"]),
-        ("bend", "ค่าพับ (บาท / จุด)", P["bend_price"]),
-        ("labor", "ค่าแรงอื่น (บาท / ชิ้น)", P["labor_per_piece"]),
-        ("plating", "ค่าชุบ (บาท / กก.)", P["plating_per_kg"]),
-        ("incplate", "รวมค่าชุบในราคา (1 = รวม, 0 = ไม่รวม)", 1 if P["include_plating"] else 0),
-        ("markup", "บวกเพิ่ม (%)", P["markup_pct"]),
-    ]
-    cell_of = {}
-    for key, label, val in params:
-        _cell(S, r, 1, label)
-        _cell(S, r, 2, val, fill=INPUT_FILL)
-        cell_of[key] = ref(f"$B${r}")
-        r += 1
-    _cell(S, r, 1, "สีไม่ทาสำหรับ")
-    _cell(S, r, 2, ", ".join(P["no_paint"]) or "-")
-    r += 2
-
-    # ---------------------------------------------------------------- steel prices
-    S.cell(row=r, column=1, value="ราคาเหล็ก").font = H2
+    on_sheets = [(i, s) for i, s in enumerate(sheets) if s["on"]]
+    heads = ["วัตถุดิบ", "ความหนา (มม.)", "ราคา/กก."] + [f"ราคาแผ่น {sheet_key(s)}" for _, s in on_sheets]
+    for i, h in enumerate(heads):
+        _head(S, (r, 1 + i), h, fill=GREY2)
     r += 1
-    on = [s for s in P["sheets"] if s["on"]]
-    _head(S, r, ["วัสดุ", "หนาตั้งแต่ (มม.)", "หนาถึง (มม.)", "ราคา / กก.", "กก./ตร.ม. ที่หนา 1 มม."] +
-          [f"ราคาแผ่น {s['w']:g}x{s['l']:g} (หนา 1 มม.)" for s in on])
-    r += 1
-    price_cells = []
-    for pr in P["prices"]:
-        _cell(S, r, 1, pr["material"])
-        _cell(S, r, 2, pr["t_min"] or None, fill=INPUT_FILL)
-        _cell(S, r, 3, pr["t_max"] or None, fill=INPUT_FILL)
-        _cell(S, r, 4, pr["price_kg"], fill=INPUT_FILL, fmt=MONEY)
-        _cell(S, r, 5, pr["kg_m2_mm"], fill=INPUT_FILL, fmt="0.0000")
-        for i, s in enumerate(on):
-            _cell(S, r, 6 + i, f"=ROUNDUP({s['w']:g}*{s['l']:g}/1000000*E{r}*D{r},0)", fmt=MONEY0)
-        price_cells.append((pr, ref(f"$D${r}"), ref(f"$E${r}")))
-        r += 1
-    S.cell(row=r, column=1, value="ราคาแผ่นจริง = ราคาแผ่นหนา 1 มม. × ความหนา · แถวที่ไม่ระบุช่วงความหนาใช้ได้ทุกความหนา").font = BASE
-    r += 2
-
-    def price_ref(material, t):
-        for pr, pc, kc in price_cells:
-            if pr["material"] != material:
-                continue
-            if pr["t_min"] and t < pr["t_min"] - 1e-9:
-                continue
-            if pr["t_max"] and t > pr["t_max"] + 1e-9:
-                continue
-            return pc, kc
-        return None, None
-
-    # ================================================================ sheet 2: detail rows
-    cols = ["ลำดับ", "ชิ้นส่วน", "กลุ่ม", "วัสดุ", "ความหนา (มม.)", "X (มม.)", "Y (มม.)", "จำนวน",
-            "แผ่นที่ใช้", "แผ่น กว้าง", "แผ่น ยาว", "ราคาต่อแผ่น", "เรียงแบบ 1 (ชิ้น/แผ่น)", "เรียงแบบ 2 (ชิ้น/แผ่น)",
-            "ชิ้น/แผ่น", "การวาง", "ค่าโลหะ / ชิ้น", "ค่าสี / ชิ้น", "รอยพับ", "ค่าแรง / ชิ้น", "ค่าชุบ / ชิ้น",
-            "น้ำหนัก (กก.)", "ราคา / ชิ้น", "ราคารวม", "หมายเหตุ"]
-    _head(D, 1, cols)
-    _widths(D, [6, 26, 11, 8, 10, 10, 10, 8, 12, 9, 9, 12, 12, 12, 9, 22, 12, 11, 8, 12, 11, 11, 12, 13, 40])
-    D.freeze_panes = "C2"
-    m, paint, bend, labor, plating, incplate = (cell_of[k] for k in ("margin", "paint", "bend", "labor", "plating", "incplate"))
-    r2 = 2
-    for n, row in enumerate(res["rows"], 1):
-        pc, kc = price_ref(row["material"], row["t"])
-        sh = row["sheet"]
-        err = row["error"]
-        vals = [n, row["name"], row["code"], row["material"], row["t"], row["x"], row["y"], row["qty"]]
-        for c, v in enumerate(vals, 1):
-            _cell(D, r2, c, v)
-        if sh and pc:
-            R = r2
-            arr = f"แบบ {sh['arr']}: {sh['nx']} × {sh['ny']}" + (" (หมุน 90°)" if sh["arr"] == 2 else "")
-            _cell(D, R, 9, f"{sh['w']:g}x{sh['l']:g}", fill=PICK_FILL)
-            _cell(D, R, 10, sh["w"])
-            _cell(D, R, 11, sh["l"])
-            _cell(D, R, 12, f"=ROUNDUP(J{R}*K{R}/1000000*{kc}*{pc},0)*E{R}", fmt=MONEY)
-            _cell(D, R, 13, f"=INT(J{R}/(F{R}+{m}))*INT(K{R}/(G{R}+{m}))")
-            _cell(D, R, 14, f"=INT(J{R}/(G{R}+{m}))*INT(K{R}/(F{R}+{m}))")
-            _cell(D, R, 15, f"=MAX(M{R},N{R})")
-            _cell(D, R, 16, arr)
-            _cell(D, R, 17, f"=ROUNDUP(L{R}/O{R},0)", fmt=MONEY0)
-            nopaint = row["material"] in P["no_paint"]
-            _cell(D, R, 18, 0 if nopaint else f"=ROUNDUP(F{R}*G{R}*{paint}/1000000,0)", fmt=MONEY0)
-            _cell(D, R, 19, row["bends"])
-            _cell(D, R, 20, f"=S{R}*{bend}+{labor}", fmt=MONEY)
-            _cell(D, R, 21, f"={kc}*E{R}*F{R}*G{R}/1000000*{plating}", fmt=MONEY)
-            _cell(D, R, 22, f"={kc}*E{R}*F{R}*G{R}*H{R}/1000000", fmt="0.000")
-            _cell(D, R, 23, f"=Q{R}+R{R}+T{R}+IF({incplate}=1,U{R},0)", fmt=MONEY)
-            _cell(D, R, 24, f"=W{R}*H{R}", fmt=MONEY)
-            _cell(D, R, 25, "")
-        else:
-            for c in range(9, 25):
-                _cell(D, r2, c, 0 if c in (22, 24) else None, fill=ERR_FILL)
-            _cell(D, r2, 25, err or "ไม่มีราคา", fill=ERR_FILL)
-        r2 += 1
-    last = r2 - 1
-    _cell(D, r2, 2, "รวม", font=BOLD, fill=TOTAL_FILL)
-    for c in (8, 22, 24):
-        L = get_column_letter(c)
-        _cell(D, r2, c, f"=SUM({L}2:{L}{last})" if last >= 2 else 0, font=BOLD, fill=TOTAL_FILL,
-              fmt={8: "0", 22: "0.000", 24: MONEY}[c])
-
-    # ================================================================ sheet 1: totals per group
-    S.cell(row=r, column=1, value="สรุปราคาแยกตามไฟล์ DXF (วัสดุ + ความหนา)").font = H2
-    r += 1
-    _head(S, r, ["กลุ่ม", "วัสดุ", "ความหนา (มม.)", "จำนวนชิ้น", "น้ำหนัก (กก.)", "ค่าโลหะ", "ค่าสี", "ค่าแรง",
-                 "ค่าชุบ", "ราคารวม", "แผ่นที่ต้องใช้ (ประมาณ)"])
-    r += 1
-    g0 = r
-    dr = f"'รายละเอียด'!$C$2:$C${max(last, 2)}"
-    col = lambda L: f"'รายละเอียด'!${L}$2:${L}${max(last, 2)}"  # noqa: E731
+    used = []
     for g in res["groups"]:
-        _cell(S, r, 1, g["code"], font=BOLD)
-        _cell(S, r, 2, g["material_id"])
-        _cell(S, r, 3, g["thickness"])
-        _cell(S, r, 4, f"=SUMIF({dr},A{r},{col('H')})")
-        _cell(S, r, 5, f"=SUMIF({dr},A{r},{col('V')})", fmt="0.000")
-        _cell(S, r, 6, f"=SUMPRODUCT(({dr}=A{r})*{col('Q')}*{col('H')})", fmt=MONEY)
-        _cell(S, r, 7, f"=SUMPRODUCT(({dr}=A{r})*{col('R')}*{col('H')})", fmt=MONEY)
-        _cell(S, r, 8, f"=SUMPRODUCT(({dr}=A{r})*{col('T')}*{col('H')})", fmt=MONEY)
-        _cell(S, r, 9, f"=SUMPRODUCT(({dr}=A{r})*{col('U')}*{col('H')})", fmt=MONEY)
-        _cell(S, r, 10, f"=SUMIF({dr},A{r},{col('X')})", fmt=MONEY)
-        _cell(S, r, 11, ", ".join(f"{k} × {v}" for k, v in g["sheets"].items()) or "-")
+        k = (g["material_id"], round(g["thickness"], 3))
+        if k not in used:
+            used.append(k)
+    for mid, t in used:
+        prow = row_of.get((mid, t))
+        _put(S, (r, 1), f"={PRICES}!A{prow}" if prow else f"{mid}", font=F_CELL, align=CENTER)
+        _put(S, (r, 2), t, font=F_CELL, align=CENTER)
+        _put(S, (r, 3), f"={PRICES}!C{prow}" if prow else None, fmt=ACC2)
+        for j, (i, s) in enumerate(on_sheets):
+            _put(S, (r, 4 + j), f"={PRICES}!{COL(4 + i)}{prow}*B{r}" if prow else None, fmt=ACC0)
+        r += 1
+    _put(S, (r, 1), "ราคาแผ่น = ราคาต่อแผ่นหนา 1 มม. ในหน้า ราคาเหล็ก × ความหนา", font=F_CELL, border=None)
+    r += 2
+    _put(S, (r, 1), "สรุปราคาแยกตามวัตถุดิบ", font=F_H2, border=None)
+    r += 1
+    heads = ["วัตถุดิบ", "ความหนา (มม.)", "จำนวนชิ้น", "น้ำหนัก (กก.)", "ค่าโลหะ", "ค่าสี", "ค่าใช้จ่ายอื่น", "ค่าชุบ",
+             "ราคารวม", "แผ่นที่ใช้ (ประมาณ)"]
+    for i, h in enumerate(heads):
+        _head(S, (r, 1 + i), h, fill=GOLD if h == "ราคารวม" else GREY2)
+    r += 1
+    rng = lambda L: f"'{DETAIL}'!${L}${first}:${L}${max(last, first)}"  # noqa: E731
+    g0 = r
+    for g in res["groups"]:
+        _put(S, (r, 1), g["code"], font=F_HEAD, align=CENTER)
+        _put(S, (r, 2), g["thickness"], font=F_CELL, align=CENTER)
+        _put(S, (r, 3), f"=SUMIF({rng('B')},A{r},{rng('K')})", fmt=ACC0)
+        _put(S, (r, 4), f"=SUMIF({rng('B')},A{r},{rng('L')})", fmt=ACC2)
+        _put(S, (r, 5), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng('H')})*{rng('K')})", fmt=ACC0)
+        _put(S, (r, 6), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng('I')})*{rng('K')})", fmt=ACC0)
+        _put(S, (r, 7), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng(EXT)})*{rng('K')})", fmt=ACC2)
+        _put(S, (r, 8), f"=SUMIF({rng('B')},A{r},{rng('J')})", fmt=ACC2)
+        _put(S, (r, 9), f"=SUMIF({rng('B')},A{r},{rng('M')})", fill=GOLD, fmt=ACC2)
+        _put(S, (r, 10), ", ".join(f"{k} × {v}" for k, v in g["sheets"].items()) or "-", font=F_CELL)
         r += 1
     g1 = r - 1
-    _cell(S, r, 1, "รวม", font=BOLD, fill=TOTAL_FILL)
-    for c in range(2, 12):
-        L = get_column_letter(c)
-        v = f"=SUM({L}{g0}:{L}{g1})" if c >= 4 and c <= 10 and g1 >= g0 else None
-        _cell(S, r, c, v, font=BOLD, fill=TOTAL_FILL, fmt="0.000" if c == 5 else MONEY if c >= 6 else None)
+    job_rows = []
+    for e_i, e in enumerate(P["extras"]):
+        if e["unit"] != "job":
+            continue
+        rate, on = xr[e_i]
+        _put(S, (r, 1), e["name"], font=F_CELL)
+        _put(S, (r, 2), "ต่องาน", font=F_CELL, align=CENTER)
+        _put(S, (r, 9), f"=IF({on}=1,{rate},0)", fill=GOLD, fmt=ACC2)
+        job_rows.append(r)
+        r += 1
+    _put(S, (r, 1), "รวม", font=F_HEAD, fill=GOLD, align=CENTER)
+    for c, fmt in ((3, ACC0), (4, ACC2), (5, ACC0), (6, ACC0), (7, ACC2), (8, ACC2), (9, ACC2)):
+        L = COL(c)
+        parts = [f"SUM({L}{g0}:{L}{g1})"] if g1 >= g0 else []
+        if c == 9:
+            parts += [f"{L}{j}" for j in job_rows]
+        f = "+".join(parts)
+        if f and c == 9:
+            f = f"ROUND({f},2)"
+        _put(S, (r, c), "=" + f if parts else 0, font=F_NUMB, fill=GOLD, fmt=fmt)
     tot = r
     r += 1
-    _cell(S, r, 9, "บวกเพิ่ม", font=BOLD)
-    _cell(S, r, 10, f"=ROUND(J{tot}*{cell_of['markup']}/100,2)", fmt=MONEY)
+    _put(S, (r, 8), "บวกเพิ่ม (%)", font=F_HEAD, align=CENTER)
+    _put(S, (r, 9), f"=ROUND(I{tot}*{cell['markup']}/100,2)", fmt=ACC2)
     r += 1
-    _cell(S, r, 9, "ราคารวมสุทธิ", font=BOLD, fill=TOTAL_FILL)
-    _cell(S, r, 10, f"=J{tot}+J{tot + 1}", font=BOLD, fill=TOTAL_FILL, fmt=MONEY)
+    _put(S, (r, 8), "ราคารวมสุทธิ", font=F_HEAD, fill=GOLD, align=CENTER)
+    _put(S, (r, 9), f"=ROUND(I{tot}+I{tot + 1},2)", font=Font(name=CAL, size=13, bold=True), fill=GOLD, fmt=ACC2)
     r += 2
     if res["errors"]:
-        S.cell(row=r, column=1, value="ชิ้นที่ยังคิดราคาไม่ได้ (ดูแถวสีแดงในหน้ารายละเอียด):").font = BOLD
+        _put(S, (r, 1), "ชิ้นที่ยังคิดราคาไม่ได้ (แถวสีแดงในหน้ารายละเอียด)", font=F_HEAD, border=None)
         for e in sorted(set(res["errors"])):
             r += 1
-            S.cell(row=r, column=1, value="• " + e).font = BASE
+            _put(S, (r, 1), "• " + e, font=F_CELL, border=None)
         r += 2
     excl = [p for p in project.parts if not p.include]
     if excl:
-        S.cell(row=r, column=1, value="ชิ้นที่ไม่ได้คิดราคา (ไม่นำไปตัด)").font = H2
+        _put(S, (r, 1), "ชิ้นที่ไม่ได้คิดราคา (ไม่นำไปตัด)", font=F_H2, border=None)
         r += 1
-        _head(S, r, ["ชิ้นส่วน", "จำนวน", "กลุ่ม / เหตุผล"])
+        for i, h in enumerate(["ชิ้นส่วน", "จำนวน", "กลุ่ม / เหตุผล"]):
+            _head(S, (r, 1 + i), h, fill=GREY2)
         r += 1
         for p in excl:
-            _cell(S, r, 1, p.name)
-            _cell(S, r, 2, p.qty)
-            _cell(S, r, 3, p.category or p.auto_reason or "ผู้ใช้เลือกไม่ตัด")
+            _put(S, (r, 1), p.name, font=F_CELL)
+            _put(S, (r, 2), p.qty, align=CENTER)
+            _put(S, (r, 3), p.category or p.auto_reason or "ผู้ใช้เลือกไม่ตัด", font=F_CELL)
+            S.merge_cells(start_row=r, start_column=3, end_row=r, end_column=8)
             r += 1
 
-    # ================================================================ sheet 3: fit comparison
-    _head(C, 1, ["ชิ้นส่วน", "X (มม.)", "Y (มม.)", "แผ่น", "เปิดใช้", "เรียงแบบ 1", "เรียงแบบ 2", "ชิ้น/แผ่น",
-                 "ราคาแผ่น", "ค่าโลหะ / ชิ้น", "เลือก"])
-    _widths(C, [26, 10, 10, 13, 9, 16, 16, 10, 12, 13, 8])
+    # ================================================================ เทียบขนาดแผ่น
+    heads = ["ชิ้นส่วน", "X (มม.)", "Y (มม.)", "แผ่น", "มีแผ่น", "เรียงแบบ 1", "เรียงแบบ 2", "ชิ้น/แผ่น", "ราคาแผ่น",
+             "ค่าโลหะ / ชิ้น", "เลือก"]
+    for i, h in enumerate(heads):
+        _head(C, (1, 1 + i), h, fill=GREY2)
+    for col, w in zip("ABCDEFGHIJK", (26, 10, 10, 12, 8, 16, 16, 10, 12, 13, 8)):
+        C.column_dimensions[col].width = w
     C.freeze_panes = "B2"
     rc = 2
     m_val = P["margin"]
     for row in res["rows"]:
         for o in row["options"]:
-            pick = row["sheet"] and o["w"] == row["sheet"]["w"] and o["l"] == row["sheet"]["l"]
-            fill = PICK_FILL if pick else None
+            pick = bool(row["sheet"]) and o["w"] == row["sheet"]["w"] and o["l"] == row["sheet"]["l"]
+            fill = BLUE if pick else None
             x, y = row["x"], row["y"]
             a1 = f"{int(o['w'] // (x + m_val))} × {int(o['l'] // (y + m_val))} = {o['count1']}"
             a2 = f"{int(o['w'] // (y + m_val))} × {int(o['l'] // (x + m_val))} = {o['count2']}"
-            vals = [row["name"], x, y, f"{o['w']:g}x{o['l']:g}", "ใช้" if o["on"] else "ไม่ใช้", a1, a2, o["count"],
-                    o["sheet_price"], o["metal"], "✓" if pick else ""]
+            vals = [row["name"], x, y, sheet_key(o), "มี" if o["on"] else "ไม่มี", a1, a2, o["count"], o["sheet_price"],
+                    o["metal"], "✓" if pick else ""]
             for c, v in enumerate(vals, 1):
-                _cell(C, rc, c, v, fill=fill, fmt=MONEY if c in (9, 10) else None)
+                _put(C, (rc, c), v, font=F_CELL if c == 1 else F_NUM, fill=fill, fmt=ACC0 if c in (9, 10) else None)
             rc += 1
-    C.cell(row=rc + 1, column=1, value=(f"เรียงแบบ 1 = ด้าน X ตามด้านกว้างของแผ่น, เรียงแบบ 2 = หมุนชิ้น 90° · ทุกชิ้นเผื่อ "
-                                        f"{m_val:g} มม. · โปรแกรมเลือกแผ่นและแบบที่ค่าโลหะต่อชิ้นต่ำสุด")).font = BASE
+    _put(C, (rc + 1, 1), f"ทุกชิ้นเผื่อ {m_val:g} มม. · เลือกแผ่นและแบบที่ค่าโลหะต่อชิ้นต่ำสุด (เท่ากันเลือกแผ่นใหญ่)",
+         font=F_CELL, border=None)
 
     wb.calculation.fullCalcOnLoad = True
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _code(mats: dict, p: dict) -> str:
+    m = mats.get(p["material"], {"prefix": p["material"]})
+    return f"{m['prefix']}{p['gauge']}" if p.get("gauge") else f"{m['prefix']}#{p['thickness']:g}mm"

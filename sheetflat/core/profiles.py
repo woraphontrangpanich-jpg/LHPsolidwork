@@ -49,12 +49,17 @@ DEFAULT_PROFILE = {
     "table": DEFAULT_TABLE,
 }
 
-# Price list ("ราคาเหล็ก" sheet of the shop's สูตรคิดราคา workbook).
-#   kg_m2_mm  weight of 1 m2 at 1 mm   (the workbook uses 24 kg per 1220 x 2440 x 1 mm sheet)
-#   price_kg  baht per kg; a row can be limited to a thickness range (e.g. ZN 3 mm and up = ZN#3mm)
-_KG24 = round(24 / (1.22 * 2.44), 6)
-_KG8 = round(8 / (1.22 * 2.44), 6)
-_KG23 = round(23 / (1.22 * 2.44), 6)
+# Price list (the "ราคาเหล็ก" sheet of the shop's สูตรคิดราคา workbook), one row per steel and
+# bend-table thickness, keyed like the DXF files (ZN#22, ZN#3mm, ST#14 ...).
+#   kg_sheet  weight of a 1220 x 2440 sheet at 1 mm (the workbook: ZN 24 kg -> =24/(1220*2440) kg per mm2)
+#   price_kg  baht per kg
+# Rows are added automatically for every steel x thickness in the bend table (and in the job).
+STEEL_DEFAULTS = {          # first price for a new row: (price/kg below 3 mm, from 3 mm, kg per 1220x2440x1)
+    "ZN": (35, 45, 24), "ST": (45, 45, 24), "AL": (150, 150, 8), "SUS": (120, 120, 23),
+}
+EXTRA_UNITS = {             # how an extra cost is counted
+    "piece": "ชิ้น", "bend": "จุดพับ", "hole": "รู", "kg": "กก.", "m2": "ตร.ม.", "job": "งาน",
+}
 DEFAULT_PRICING = {
     "sheets": [
         {"w": 1220, "l": 2440, "on": True},
@@ -63,27 +68,31 @@ DEFAULT_PRICING = {
         {"w": 1219, "l": 1550, "on": False},
     ],
     "margin": 20.0,              # mm added to every part for clamping and spacing ("เผื่อที่ clamp & วางแบบ")
-    "prices": [
-        {"material": "ZN", "t_min": 0, "t_max": 2.99, "price_kg": 35, "kg_m2_mm": _KG24},
-        {"material": "ZN", "t_min": 3, "t_max": 0, "price_kg": 45, "kg_m2_mm": _KG24},
-        {"material": "ST", "t_min": 0, "t_max": 0, "price_kg": 45, "kg_m2_mm": _KG24},
-        {"material": "AL", "t_min": 0, "t_max": 0, "price_kg": 150, "kg_m2_mm": _KG8},
-        {"material": "SUS", "t_min": 0, "t_max": 0, "price_kg": 120, "kg_m2_mm": _KG23},
-    ],
+    "prices": [],                # filled from the bend table by fill_price_rows()
     "paint_per_m2": 200.0,       # ค่าสี 0.0002 baht / mm2
-    "no_paint": ["SUS"],         # materials that are not painted
+    "no_paint": ["SUS"],         # steels that are not painted
     "plating_per_kg": 20.0,      # ค่าชุบ
     "include_plating": False,    # the workbook shows plating but does not add it to the total
-    "bend_price": 5.0,           # ค่าพับ per bend
-    "labor_per_piece": 0.0,      # other labour per piece (ติ๊ก, deburring, ...)
     "markup_pct": 0.0,
+    "extras": [                  # other costs the user can add (Note sheet: พับ 5 บาท, ติ๊ก 5 บาท)
+        {"name": "ค่าพับ", "rate": 5.0, "unit": "bend", "on": True},
+        {"name": "ค่าติ๊ก", "rate": 5.0, "unit": "piece", "on": False},
+    ],
 }
+
+
+def _steel_default(material: str, t: float):
+    lo, hi, kg = STEEL_DEFAULTS.get(material, (35, 35, 24))
+    return (hi if t >= 3 - 1e-9 else lo), kg
 
 
 def validate_pricing(p) -> dict:
     base = copy.deepcopy(DEFAULT_PRICING)
     if isinstance(p, dict):
         base.update({k: p[k] for k in base if k in p})
+        if "extras" not in p and ("bend_price" in p or "labor_per_piece" in p):     # older format
+            base["extras"] = [{"name": "ค่าพับ", "rate": float(p.get("bend_price") or 0), "unit": "bend", "on": True},
+                              {"name": "ค่าแรงอื่น", "rate": float(p.get("labor_per_piece") or 0), "unit": "piece", "on": True}]
     sheets = []
     for s in base["sheets"]:
         w, l = float(s.get("w") or 0), float(s.get("l") or 0)
@@ -92,19 +101,66 @@ def validate_pricing(p) -> dict:
     if not sheets:
         raise ValueError("ต้องมีขนาดแผ่นเหล็กอย่างน้อย 1 ขนาด")
     base["sheets"] = sheets
-    prices = []
+    prices, seen = [], set()
     for r in base["prices"]:
         m = str(r.get("material") or "").strip()
-        if not m:
+        t = float(r.get("thickness") or 0)
+        if not m or t <= 0:
+            continue                                   # also drops rows of the older t_min/t_max format
+        key = (m, round(t, 3))
+        if key in seen:
             continue
-        prices.append({"material": m, "t_min": float(r.get("t_min") or 0), "t_max": float(r.get("t_max") or 0),
-                       "price_kg": float(r.get("price_kg") or 0), "kg_m2_mm": float(r.get("kg_m2_mm") or _KG24)})
+        seen.add(key)
+        prices.append({"material": m, "gauge": str(r.get("gauge") or "").strip(), "thickness": t,
+                       "price_kg": max(0.0, float(r.get("price_kg") or 0)),
+                       "kg_sheet": max(0.0, float(r.get("kg_sheet") or _steel_default(m, t)[1]))})
     base["prices"] = prices
-    for k in ("margin", "paint_per_m2", "plating_per_kg", "bend_price", "labor_per_piece", "markup_pct"):
+    for k in ("margin", "paint_per_m2", "plating_per_kg", "markup_pct"):
         base[k] = max(0.0, float(base[k] or 0))
     base["include_plating"] = bool(base["include_plating"])
     base["no_paint"] = [str(x).strip() for x in base.get("no_paint") or [] if str(x).strip()]
+    extras = []
+    for e in base.get("extras") or []:
+        name = str(e.get("name") or "").strip()[:40]
+        if not name:
+            continue
+        unit = e.get("unit") if e.get("unit") in EXTRA_UNITS else "piece"
+        extras.append({"name": name, "rate": max(0.0, float(e.get("rate") or 0)), "unit": unit, "on": bool(e.get("on", True))})
+    base["extras"] = extras
     return base
+
+
+def fill_price_rows(pricing: dict, profile: dict, materials: list, more: list | None = None) -> bool:
+    """Make sure there is a price row for every steel x bend-table thickness (and every (steel, t) in
+    ``more``). New rows copy the nearest row of the same steel, else the steel's default. True if rows were added."""
+    want = []
+    for m in materials:
+        for r in profile.get("table", []):
+            if r.get("material") and r["material"] != m["id"]:
+                continue
+            want.append((m["id"], r["thickness"], r.get("gauge", "")))
+    for mid, t in more or []:
+        row = match_row(profile, t, mid)
+        want.append((mid, row["thickness"] if row else t, row["gauge"] if row else ""))
+    have = {(r["material"], round(r["thickness"], 3)) for r in pricing["prices"]}
+    added = False
+    for mid, t, gauge in want:
+        if (mid, round(t, 3)) in have:
+            continue
+        same = [r for r in pricing["prices"] if r["material"] == mid]
+        if same:
+            near = min(same, key=lambda r: abs(r["thickness"] - t))
+            price, kg = near["price_kg"], near["kg_sheet"]
+            if t >= 3 - 1e-9 > near["thickness"] and mid in STEEL_DEFAULTS:
+                price = _steel_default(mid, t)[0]
+        else:
+            price, kg = _steel_default(mid, t)
+        pricing["prices"].append({"material": mid, "gauge": gauge, "thickness": t, "price_kg": price, "kg_sheet": kg})
+        have.add((mid, round(t, 3)))
+        added = True
+    order = {m["id"]: i for i, m in enumerate(materials)}
+    pricing["prices"].sort(key=lambda r: (order.get(r["material"], 99), r["material"], r["thickness"]))
+    return added
 
 
 # size hints that a part is a purchased item / tube and not a laser-cut blank

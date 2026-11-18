@@ -401,8 +401,21 @@ body.demo .topnav { display: flex; }
 /* ---------- overview: edit groups ---------- */
 .edit-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .edit-row .hint { margin: 0; }
-.movebar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin-top: 18px; padding: 12px 14px;
+.movebar { position: sticky; top: 0; z-index: 2; margin-top: 18px; padding: 12px 14px; max-height: 70vh; overflow: auto;
   background: var(--sel-bg); border: 1px solid var(--sel); border-radius: var(--radius); }
+.mv-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; }
+.mv-row .grow { flex: 1; }
+.newsteel { margin-top: 12px; padding: 12px; background: var(--paper); border: 1px solid var(--zinc-200); border-radius: var(--radius); }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.grid3 label { display: grid; gap: 3px; font-size: 12px; color: var(--steel); }
+.ns-mode { border: 0; padding: 0; margin: 12px 0 4px; display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; }
+.ns-mode legend { font-size: 12px; color: var(--steel); padding: 0; margin-bottom: 4px; }
+.radio-line { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.ns-rows { max-width: 460px; }
+.ns-rows input[readonly] { background: var(--zinc-50); color: var(--steel); }
+.mv-prev { margin-top: 12px; background: var(--paper); }
+.mv-prev small { color: var(--steel); }
+@media (max-width: 700px) { .grid3 { grid-template-columns: 1fr; } }
 .mv-n { align-self: center; min-width: 9em; }
 .mv-to { display: grid; gap: 3px; font-size: 12px; color: var(--steel); }
 .mv-to select { min-width: 260px; max-width: 360px; }
@@ -443,3 +456,7 @@ table.pt select { width: 100%; }
 table.pt .mat-sel { min-width: 112px; }
 .top-job { flex: 0 1 auto; }
 .job-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
+.price-pt tr.mat-row td { padding-top: 10px; font-weight: 600; font-size: 12.5px; color: var(--steel); }
+.price-pt td.n { text-align: right; }
+.extra-pt td:first-child, .extra-pt th:first-child { width: 34px; text-align: center; }
+.extra-pt select { width: 100%; }

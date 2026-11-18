@@ -314,6 +314,63 @@ def move_parts(jid: str, body: dict):
     return pr.to_json()
 
 
+@app.post("/api/jobs/{jid}/materials")
+def add_material(jid: str, body: dict):
+    """A new steel type from the "move parts" bar, saved for later jobs.
+
+    body = {"material": {"id", "name", "prefix"}, "base": "ZN" | "",
+            "rows": [{"thickness", "bd", "gauge"}], "price_kg": 120}
+    Bend values: copied from the base steel or typed by the user; written as rows of the job's bend
+    profile that apply to this steel only. Price rows are added to the job and to the default prices."""
+    pr = get_job(jid)
+    m = dict(body.get("material") or {})
+    mid = str(m.get("id") or "").strip()
+    if not mid:
+        raise HTTPException(400, "กรุณาใส่รหัสชนิดเหล็ก")
+    data = json.loads(json.dumps(store.data))
+    if any(x["id"].lower() == mid.lower() for x in data["materials"]):
+        raise HTTPException(400, f"มีชนิดเหล็ก {mid} อยู่แล้ว เลือกจากรายการแทน")
+    data["materials"].append({"id": mid, "name": str(m.get("name") or mid).strip(), "prefix": str(m.get("prefix") or mid).strip()})
+    prof = next((x for x in data["profiles"] if x["id"] == pr.profile["id"]), None)
+    rows = []
+    for r in body.get("rows") or []:
+        try:
+            t, bd = float(r.get("thickness") or 0), float(r.get("bd") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "ค่ายืดต้องเป็นตัวเลข")
+        if t > 0 and bd > 0:
+            rows.append({"gauge": str(r.get("gauge") or "").strip(), "thickness": t, "bd": bd, "material": mid})
+    if prof is not None:
+        prof["table"] = [x for x in prof["table"] if x.get("material") != mid] + rows
+    base = str(body.get("base") or "")
+    price = body.get("price_kg")
+    try:
+        price = float(price) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        raise HTTPException(400, "ราคาต้องเป็นตัวเลข")
+
+    def add_prices(pricing):
+        src = [x for x in pricing["prices"] if x["material"] == base]
+        for r in rows:
+            near = min(src, key=lambda x: abs(x["thickness"] - r["thickness"])) if src else None
+            pricing["prices"] = [x for x in pricing["prices"] if not (x["material"] == mid and abs(x["thickness"] - r["thickness"]) < 1e-6)]
+            pricing["prices"].append({"material": mid, "gauge": r["gauge"], "thickness": r["thickness"],
+                                      "price_kg": price if price is not None else (near["price_kg"] if near else 35),
+                                      "kg_sheet": near["kg_sheet"] if near else 24})
+    add_prices(data["pricing"])
+    try:
+        store.replace(data)
+    except (ValueError, KeyError) as ex:
+        raise HTTPException(400, str(ex))
+    add_prices(pr.pricing)
+    for job in jobs.values():
+        try:
+            job.recompute()
+        except Exception:   # noqa
+            traceback.print_exc()
+    return {"profiles": store.data, "project": pr.to_json()}
+
+
 @app.get("/api/jobs/{jid}/pricing")
 def get_pricing(jid: str):
     return get_job(jid).price()

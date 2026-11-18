@@ -359,67 +359,153 @@ function renderOverview() {
     selectPart(tr.dataset.part);
   }));
   box.querySelectorAll("[data-pick]").forEach((c) => c.addEventListener("change", () => togglePick(c.dataset.pick, c.checked)));
-  box.querySelectorAll("[data-pickall]").forEach((c) => c.addEventListener("change", () => { c.dataset.pickall.split(",").forEach((id) => (c.checked ? S.picked.add(id) : S.picked.delete(id))); renderOverview(); }));
+  box.querySelectorAll("[data-pickall]").forEach((c) => c.addEventListener("change", () => { syncMove(); c.dataset.pickall.split(",").forEach((id) => (c.checked ? S.picked.add(id) : S.picked.delete(id))); renderOverview(); }));
   box.querySelectorAll("[data-group]").forEach((b) => b.addEventListener("click", () => selectGroup(b.dataset.group)));
   box.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () => download(b.dataset.dl)));
-  const e1 = $("#ovEdit"); if (e1) e1.onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } S.editGroups = true; S.picked.clear(); renderOverview(); };
+  const e1 = $("#ovEdit"); if (e1) e1.onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } S.editGroups = true; S.picked.clear(); S.move = null; renderOverview(); };
   if (ed) bindMoveBar();
 }
 function togglePick(id, on) {
+  syncMove();
   if (on === undefined) on = !S.picked.has(id);
   on ? S.picked.add(id) : S.picked.delete(id);
   renderOverview();
 }
-/* where the picked parts can go: existing DXF groups, every steel at the thicknesses in this job,
-   existing "not cut" groups, or a name the user types */
-function moveTargets() {
-  const P = S.project, out = [], seen = new Set();
-  const add = (v, label, grp) => { if (!seen.has(v)) { seen.add(v); out.push({ v, label, grp }); } };
-  P.groups.forEach((g) => add(`m|${g.material_id}|${g.thickness}`, `${g.code} · ${matName(g.material_id)} หนา ${fmtG(g.thickness)} มม.`, "ไฟล์ DXF ที่มีอยู่"));
-  const ts = [...new Set(P.parts.filter((p) => p.thickness.used).map((p) => p.thickness.used))].sort((a, b) => a - b);
-  P.materials.forEach((m) => ts.forEach((t) => add(`m|${m.id}|${t}`, `${matName(m.id)} หนา ${fmtG(t)} มม.`, "สร้างไฟล์ DXF ใหม่")));
-  add("x|", "ไม่นำไปตัด", "ไม่ตัด");
-  [...new Set(P.parts.map((p) => p.category).filter(Boolean))].forEach((c) => add("c|" + c, c, "ไม่ตัด"));
-  return out;
-}
+/* where the picked parts can go. A part keeps its own flat size and thickness; moving it to another
+   steel makes (or joins) the DXF group of that steel at that thickness. */
 const matName = (id) => ((S.project.materials.find((m) => m.id === id) || {}).name || id);
+const matPrefix = (id) => ((S.project.materials.find((m) => m.id === id) || {}).prefix || id);
+/* same rule as profiles.match_row: a row for this steel wins over a row for every steel */
+function bendRow(t, mid) {
+  const prof = S.project.profile, tol = prof.match_tol ?? 0.06;
+  let best = null, key = null;
+  for (const r of prof.table) {
+    if (r.material && r.material !== mid) continue;
+    const d = Math.abs(r.thickness - t);
+    if (d > tol) continue;
+    const k = [Math.round(d * 1e6), r.material ? 0 : 1];
+    if (!key || k[0] < key[0] || (k[0] === key[0] && k[1] < key[1])) { best = r; key = k; }
+  }
+  return best;
+}
+const groupCode = (mid, t) => { const r = bendRow(t, mid); return r && r.gauge ? matPrefix(mid) + r.gauge : `${matPrefix(mid)}#${fmtG(t)}mm`; };
+function pickedThicknesses() {
+  return [...new Set([...S.picked].map((id) => part(id)).filter((p) => p && p.thickness.used).map((p) => p.thickness.used))].sort((a, b) => a - b);
+}
 function moveBarHTML() {
-  const n = S.picked.size, opts = moveTargets();
-  const grps = [...new Set(opts.map((o) => o.grp))];
-  return `<div class="movebar" role="region" aria-label="ย้ายชิ้นที่เลือก">
-    <b class="mv-n">${n ? `เลือก ${n} แบบ` : "ติ๊กเลือกชิ้นที่จะย้าย"}</b>
-    <label class="mv-to">ย้ายไปที่
-      <select id="mvTarget">${grps.map((g) => `<optgroup label="${esc(g)}">${opts.filter((o) => o.grp === g).map((o) => `<option value="${esc(o.v)}">${esc(o.label)}</option>`).join("")}</optgroup>`).join("")}</select></label>
-    <label class="mv-to">หรือพิมพ์ชื่อกลุ่มใหม่ (ไม่ตัด)
-      <input type="text" id="mvName" placeholder="เช่น ซื้อสำเร็จรูป" list="mvNames" maxlength="60"></label>
-    <datalist id="mvNames"><option value="ซื้อสำเร็จรูป"><option value="ลูกค้าจัดหาเอง"><option value="งานกลึง"></datalist>
-    <button class="btn primary small" id="mvGo" ${n ? "" : "disabled"}>ย้าย</button>
-    <button class="btn small" id="mvDone">เสร็จ</button></div>`;
+  const P = S.project, n = S.picked.size, mv = S.move || (S.move = { target: "", base: P.materials[0].id, mode: "base" });
+  const cats = [...new Set(P.parts.map((p) => p.category).filter(Boolean))];
+  const opt = (v, l) => `<option value="${esc(v)}" ${mv.target === v ? "selected" : ""}>${esc(l)}</option>`;
+  let h = `<div class="movebar" role="region" aria-label="ย้ายชิ้นที่เลือก">
+    <div class="mv-row">
+      <b class="mv-n">${n ? `เลือก ${n} แบบ` : "ติ๊กเลือกชิ้นที่จะย้าย"}</b>
+      <label class="mv-to">ย้ายไปที่
+        <select id="mvTarget"><option value="" ${mv.target ? "" : "selected"} disabled>เลือกปลายทาง</option>
+          <optgroup label="เหล็ก (ตัด · ขนาดและความหนาเดิมของชิ้น)">${P.materials.map((m) => opt("m|" + m.id, m.name)).join("")}${opt("new|", "+ เหล็กชนิดใหม่…")}</optgroup>
+          <optgroup label="ไม่ตัด">${opt("x|", "ไม่นำไปตัด")}${cats.map((c) => opt("c|" + c, c)).join("")}${opt("cnew|", "+ กลุ่มใหม่ (พิมพ์ชื่อ เช่น ซื้อสำเร็จรูป)…")}</optgroup>
+        </select></label>
+      ${mv.target === "cnew|" ? `<label class="mv-to">ชื่อกลุ่ม<input type="text" id="mvName" value="${esc(mv.name || "")}" placeholder="เช่น ซื้อสำเร็จรูป" list="mvNames" maxlength="60"></label>
+        <datalist id="mvNames"><option value="ซื้อสำเร็จรูป"><option value="ลูกค้าจัดหาเอง"><option value="งานกลึง"></datalist>` : ""}
+      <span class="grow"></span>
+      <button class="btn primary small" id="mvGo" ${n && mv.target ? "" : "disabled"}>${mv.target === "new|" ? "บันทึกเหล็กใหม่และย้าย" : "ย้าย"}</button>
+      <button class="btn small" id="mvDone">เสร็จ</button>
+    </div>`;
+  if (mv.target === "new|") h += newSteelHTML(mv);
+  const [kind, mid] = mv.target.split("|");
+  if (n && (kind === "m" || kind === "new")) h += movePreviewHTML(kind === "m" ? mid : (mv.id || "ใหม่"), kind === "new" ? mv : null);
+  return h + `</div>`;
+}
+function newSteelHTML(mv) {
+  const P = S.project, ts = pickedThicknesses();
+  const base = mv.base || P.materials[0].id;
+  mv.rows = ts.map((t) => {
+    const old = (mv.rows || []).find((r) => Math.abs(r.thickness - t) < 1e-6);
+    const br = bendRow(t, base);
+    const bd = mv.mode === "base" || !old ? (br ? br.bd : "") : old.bd;
+    return { thickness: t, gauge: br ? br.gauge : (old && old.gauge) || "", bd };
+  });
+  return `<div class="newsteel">
+    <div class="grid3">
+      <label>รหัสเหล็ก<input type="text" id="nsId" value="${esc(mv.id || "")}" placeholder="เช่น SUS" maxlength="12"></label>
+      <label>ชื่อ<input type="text" id="nsName" value="${esc(mv.nm || "")}" placeholder="เช่น สแตนเลส (SUS)"></label>
+      <label>ราคา / กก. (บาท)<input type="number" id="nsPrice" min="0" step="0.5" value="${esc(mv.price ?? "")}" placeholder="ตามเหล็กที่อิง"></label>
+    </div>
+    <fieldset class="ns-mode"><legend>ค่ายืดของเหล็กนี้</legend>
+      <label class="radio-line"><input type="radio" name="nsMode" value="base" ${mv.mode === "base" ? "checked" : ""}> อิงค่ายืดของ
+        <select id="nsBase">${P.materials.map((m) => `<option value="${esc(m.id)}" ${m.id === base ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label>
+      <label class="radio-line"><input type="radio" name="nsMode" value="own" ${mv.mode === "own" ? "checked" : ""}> กำหนดเอง</label>
+    </fieldset>
+    <table class="pt ns-rows"><thead><tr><th>เบอร์</th><th>ความหนา (มม.)</th><th>ค่ายืด 90° (มม.)</th></tr></thead><tbody>
+      ${mv.rows.map((r, i) => `<tr><td><input type="text" data-ns="${i}" data-f="gauge" value="${esc(r.gauge)}" aria-label="เบอร์" ${mv.mode === "base" ? "readonly" : ""}></td>
+        <td class="n">${fmtG(r.thickness)}</td>
+        <td><input type="number" step="0.01" min="0" data-ns="${i}" data-f="bd" value="${r.bd}" aria-label="ค่ายืด หนา ${fmtG(r.thickness)}" ${mv.mode === "base" ? "readonly" : ""}></td></tr>`).join("")}
+    </tbody></table>
+    <p class="hint">บันทึกไว้ในเครื่องนี้ ใช้ได้กับงานถัดไป (ค่ายืดลงในโหมด “${esc(P.profile.name)}” เป็นแถวเฉพาะเหล็กนี้ และเพิ่มในตารางราคา)</p>
+  </div>`;
+}
+function movePreviewHTML(mid, mv) {
+  const rows = [...S.picked].map((id) => part(id)).filter(Boolean).map((p) => {
+    const t = p.thickness.used, f = p.flat;
+    if (!t || !f) return `<tr><td>${esc(p.name)}</td><td colspan="4" class="why">ไม่ใช่แผ่นเหล็ก ย้ายไปกลุ่มตัดไม่ได้</td></tr>`;
+    let bd, src;
+    if (mv) {
+      const r = (mv.rows || []).find((x) => Math.abs(x.thickness - t) < 1e-6);
+      bd = r && r.bd ? +r.bd : null; src = mv.mode === "base" ? `อิง ${esc(matName(mv.base))}` : "กำหนดเอง";
+    } else {
+      const r = bendRow(t, mid);
+      bd = r ? r.bd : null; src = r ? (r.material ? `แถวเฉพาะ ${esc(mid)}` : `ตาราง ${esc(r.gauge || "")} (ทุกชนิด)`) : "ไม่อยู่ในตาราง ใช้ K-factor";
+    }
+    const code = mv ? `${esc(mv.id || "?")}${(mv.rows.find((x) => Math.abs(x.thickness - t) < 1e-6) || {}).gauge || "#" + fmtG(t) + "mm"}` : esc(groupCode(mid, t));
+    return `<tr><td>${esc(p.name)}</td><td class="n">${fmt(f.w)} × ${fmt(f.h)}</td><td class="n">${fmtG(t)}</td><td><b>${code}</b></td><td>${bd ? fmt(bd, 2) + " มม." : "–"} <small>${src}</small></td></tr>`;
+  }).join("");
+  return `<table class="otable mv-prev"><thead><tr><th>ชิ้นส่วน</th><th class="n">ขนาดแผ่นคลี่ (มม.)</th><th class="n">หนา</th><th>กลุ่มใหม่ / ไฟล์ DXF</th><th>ค่ายืด 90° ที่จะใช้</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function syncMove() {
+  const mv = S.move; if (!mv) return;
+  const v = (id) => { const e = $("#" + id); return e ? e.value : undefined; };
+  if (v("mvName") !== undefined) mv.name = v("mvName");
+  if (v("nsId") !== undefined) { mv.id = v("nsId").trim(); mv.nm = v("nsName"); mv.price = v("nsPrice"); }
+  const mode = document.querySelector("input[name=nsMode]:checked"); if (mode) mv.mode = mode.value;
+  if (v("nsBase") !== undefined) mv.base = v("nsBase");
+  document.querySelectorAll("[data-ns]").forEach((i) => { const r = mv.rows[+i.dataset.ns]; if (r) r[i.dataset.f] = i.dataset.f === "bd" ? i.value : i.value.trim(); });
 }
 function bindMoveBar() {
-  $("#mvDone").onclick = () => { S.editGroups = false; S.picked.clear(); renderOverview(); };
-  $("#mvName").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#mvGo").click(); } });
-  $("#mvGo").onclick = async () => {
-    const ids = [...S.picked]; if (!ids.length) return;
-    const typed = $("#mvName").value.trim();
-    let target, label;
-    if (typed) {
-      const mat = S.project.materials.find((m) => m.id.toLowerCase() === typed.toLowerCase());
-      target = { category: typed }; label = `กลุ่ม “${typed}”`;
-      if (mat) { toast(`“${typed}” เป็นชนิดเหล็ก เลือกจากรายการ “ย้ายไปที่” แทน`); return; }
-    } else {
-      const [kind, a, b] = $("#mvTarget").value.split("|");
-      if (kind === "m") { target = { material_id: a, thickness: +b }; label = `${matName(a)} หนา ${fmtG(+b)} มม.`; }
-      else if (kind === "c") { target = { category: a }; label = `กลุ่ม “${a}”`; }
-      else { target = { include: false }; label = "ไม่นำไปตัด"; }
-    }
-    try {
-      setProject(await sendJSON(`/api/jobs/${S.jobId}/move`, "POST", { ids, target }));
-      S.picked.clear(); S.price = null;
-      renderTop(); renderRail(); renderInspector(); renderOverview();
-      toast(`ย้าย ${ids.length} แบบไปที่ ${label} แล้ว`);
-    } catch (e) { toast(e.message, 4000); }
-  };
+  const rerender = () => { syncMove(); renderOverview(); };
+  $("#mvDone").onclick = () => { S.editGroups = false; S.picked.clear(); S.move = null; renderOverview(); };
+  $("#mvTarget").onchange = (e) => { syncMove(); S.move.target = e.target.value; renderOverview(); const f = $("#nsId") || $("#mvName"); if (f) f.focus(); };
+  document.querySelectorAll("input[name=nsMode]").forEach((r) => (r.onchange = rerender));
+  const base = $("#nsBase"); if (base) base.onchange = () => { syncMove(); S.move.mode = "base"; renderOverview(); };
+  const nsId = $("#nsId"); if (nsId) nsId.addEventListener("change", rerender);
+  document.querySelectorAll("[data-ns][data-f=bd]").forEach((i) => i.addEventListener("change", rerender));
+  const nm = $("#mvName"); if (nm) nm.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#mvGo").click(); } });
+  $("#mvGo").onclick = doMove;
+}
+async function doMove() {
+  syncMove();
+  const ids = [...S.picked], mv = S.move; if (!ids.length || !mv.target) return;
+  const [kind, val] = mv.target.split("|");
+  let target, label;
+  try {
+    if (kind === "new") {
+      if (!mv.id) throw new Error("กรุณาใส่รหัสเหล็ก เช่น SUS");
+      if (S.project.materials.some((m) => m.id.toLowerCase() === mv.id.toLowerCase())) throw new Error(`มีเหล็ก ${mv.id} อยู่แล้ว เลือกจากรายการ “ย้ายไปที่” แทน`);
+      if (mv.rows.some((r) => !(+r.bd > 0))) throw new Error("ใส่ค่ายืดให้ครบทุกความหนา");
+      const r = await sendJSON(`/api/jobs/${S.jobId}/materials`, "POST", {
+        material: { id: mv.id, name: mv.nm || mv.id, prefix: mv.id }, base: mv.base,
+        rows: mv.rows.map((x) => ({ thickness: x.thickness, bd: +x.bd, gauge: x.gauge })), price_kg: mv.price === "" ? null : +mv.price });
+      S.profilesData = r.profiles; setProject(r.project); fillProfileSelects();
+      target = { material_id: mv.id }; label = matName(mv.id);
+    } else if (kind === "m") { target = { material_id: val }; label = matName(val); }
+    else if (kind === "c") { target = { category: val }; label = `กลุ่ม “${val}”`; }
+    else if (kind === "cnew") {
+      const name = (mv.name || "").trim(); if (!name) throw new Error("กรุณาพิมพ์ชื่อกลุ่ม");
+      target = { category: name }; label = `กลุ่ม “${name}”`;
+    } else { target = { include: false }; label = "ไม่นำไปตัด"; }
+    setProject(await sendJSON(`/api/jobs/${S.jobId}/move`, "POST", { ids, target }));
+    S.picked.clear(); S.price = null; S.move = { target: "", base: mv.base, mode: "base" };
+    renderTop(); renderRail(); renderInspector(); renderOverview();
+    toast(`ย้าย ${ids.length} แบบไปที่ ${label} แล้ว${kind === "new" ? " · บันทึกเหล็กชนิดใหม่ไว้ในเครื่องแล้ว" : ""}`, 4000);
+  } catch (e) { toast(e.message, 4500); }
 }
 function groupInspector(g) {
   if (!g) return "";
@@ -991,20 +1077,34 @@ async function saveProfiles(ev) {
    Pricing (คิดราคา) - same formulas as the shop's สูตรคิดราคา workbook
    ====================================================================== */
 const baht = (n, d = 0) => fmt(n, d);
+const UNITS = [["piece", "ต่อชิ้น"], ["bend", "ต่อจุดพับ"], ["hole", "ต่อรู"], ["kg", "ต่อ กก."], ["m2", "ต่อ ตร.ม."], ["job", "ต่องาน (ครั้งเดียว)"]];
 async function openPricing() {
   if (!S.jobId) return;
   $("#priceMsg").textContent = "";
   try { S.price = await getJSON(`/api/jobs/${S.jobId}/pricing`); } catch (e) { toast(e.message); return; }
   if (!S.price.meta.date) S.price.meta.date = new Date().toISOString().slice(0, 10);
+  S.priceAll = false;
   renderPriceForm(); renderPriceResult();
   $("#priceDlg").showModal();
 }
+function priceCode(r) { return r.gauge ? matPrefix(r.material) + r.gauge : `${matPrefix(r.material)}#${fmtG(r.thickness)}mm`; }
 function renderPriceForm() {
-  const P = S.price.pricing, M = S.price.meta, mats = S.project.materials;
+  const P = S.price.pricing, M = S.price.meta;
   const dis = DEMO ? "disabled" : "";
+  const used = new Set(S.price.groups.map((g) => g.material_id + "|" + g.thickness));
+  const isUsed = (r) => [...used].some((k) => { const [m, t] = k.split("|"); return m === r.material && Math.abs(+t - r.thickness) < 0.061; });
+  const shown = P.prices.map((r, i) => ({ r, i })).filter(({ r }) => S.priceAll || isUsed(r));
+  let lastMat = null;
+  const priceRows = shown.map(({ r, i }) => {
+    const head = r.material !== lastMat ? `<tr class="mat-row"><td colspan="4">${esc(matName(r.material))}</td></tr>` : "";
+    lastMat = r.material;
+    return head + `<tr class="${isUsed(r) ? "used" : ""}"><td><b>${esc(priceCode(r))}</b></td><td class="n">${fmtG(r.thickness)}</td>
+      <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="price_kg" value="${r.price_kg}" aria-label="ราคาต่อกิโลกรัม ${esc(priceCode(r))}" ${dis}></td>
+      <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="kg_sheet" value="${r.kg_sheet}" aria-label="น้ำหนักแผ่น ${esc(priceCode(r))}" ${dis}></td></tr>`;
+  }).join("");
   $("#priceBody").innerHTML = `
   <div class="price-grid">
-    <div class="price-form" id="priceForm1">
+    <div class="price-form">
       <h3 class="dlg-h3">รายละเอียดงาน</h3>
       <div class="grid2">
         <label>วันที่<input type="date" id="prDate" value="${esc(M.date)}" ${dis}></label>
@@ -1012,52 +1112,58 @@ function renderPriceForm() {
         <label style="grid-column:1/3">หมายเหตุ<input type="text" id="prNote" value="${esc(M.note)}" ${dis}></label>
       </div>
       <h3 class="dlg-h3">ราคาเหล็ก</h3>
-      <p class="hint">ราคาต่อ กก. แยกตามชนิดเหล็ก ใส่ช่วงความหนาได้ถ้าเหล็กหนามีราคาต่างกัน (เว้นว่าง = ทุกความหนา) · น้ำหนัก กก./ตร.ม. ที่หนา 1 มม. ของเหล็ก = 8.06 (แผ่น 4×8 ฟุต หนัก 24 กก.)</p>
-      <table class="pt price-pt"><thead><tr><th>เหล็ก</th><th>หนาตั้งแต่</th><th>หนาถึง</th><th>บาท / กก.</th><th>กก./ตร.ม./มม.</th><th></th></tr></thead><tbody>
-        ${P.prices.map((r, i) => `<tr><td><input type="text" list="prMats" data-p="${i}" data-f="material" value="${esc(r.material)}" aria-label="ชนิดเหล็ก" ${dis}></td>
-          <td><input type="number" step="0.1" min="0" data-p="${i}" data-f="t_min" value="${r.t_min || ""}" aria-label="หนาตั้งแต่" ${dis}></td>
-          <td><input type="number" step="0.1" min="0" data-p="${i}" data-f="t_max" value="${r.t_max || ""}" aria-label="หนาถึง" ${dis}></td>
-          <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="price_kg" value="${r.price_kg}" aria-label="บาทต่อกิโลกรัม" ${dis}></td>
-          <td><input type="number" step="0.01" min="0" data-p="${i}" data-f="kg_m2_mm" value="${+r.kg_m2_mm.toFixed(4)}" aria-label="น้ำหนักต่อตารางเมตรต่อมิลลิเมตร" ${dis}></td>
-          <td><button type="button" class="btn small ghost" data-prm="${i}" ${dis}>ลบ</button></td></tr>`).join("")}
-      </tbody></table>
-      <datalist id="prMats">${mats.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</datalist>
-      <button type="button" class="btn small" id="prAdd" ${dis}>เพิ่มราคา</button>
+      <p class="hint">แยกตามชนิดเหล็กและความหนาในตารางค่ายืด · น้ำหนัก = กก. ของแผ่น 1220×2440 หนา 1 มม. (เหล็ก 24)</p>
+      <label class="switch"><input type="checkbox" id="prAll" ${S.priceAll ? "checked" : ""}> แสดงทุกความหนา (ปกติแสดงเฉพาะที่ใช้ในงานนี้)</label>
+      <table class="pt price-pt"><thead><tr><th>วัตถุดิบ</th><th class="n">หนา (มม.)</th><th>บาท / กก.</th><th>กก. / แผ่น 1 มม.</th></tr></thead><tbody>${priceRows}</tbody></table>
       <h3 class="dlg-h3">ขนาดแผ่นเหล็กที่มี</h3>
-      <p class="hint">โปรแกรมลองวางทุกขนาดที่ติ๊กไว้ ทั้งแนวนอนและแนวตั้ง แล้วเลือกแบบที่ค่าเหล็กต่อชิ้นถูกที่สุด</p>
-      <div class="sheet-list">${P.sheets.map((s, i) => `<span class="sheet-chip"><label class="switch"><input type="checkbox" data-s="${i}" data-f="on" ${s.on ? "checked" : ""} ${dis}></label>
+      <p class="hint">โปรแกรมลองวางทุกขนาดที่ติ๊กไว้ ทั้งเรียงแบบ 1 และแบบ 2 (หมุน 90°) แล้วเลือกแบบที่ค่าโลหะต่อชิ้นถูกที่สุด</p>
+      <div class="sheet-list">${P.sheets.map((s, i) => `<span class="sheet-chip"><label class="switch"><input type="checkbox" data-s="${i}" data-f="on" ${s.on ? "checked" : ""} aria-label="ใช้แผ่น ${s.w}x${s.l}" ${dis}></label>
           <input type="number" min="1" data-s="${i}" data-f="w" value="${s.w}" aria-label="กว้าง" ${dis}><span>×</span><input type="number" min="1" data-s="${i}" data-f="l" value="${s.l}" aria-label="ยาว" ${dis}>
           <button type="button" class="btn small ghost" data-srm="${i}" aria-label="ลบขนาดนี้" ${dis}>ลบ</button></span>`).join("")}
-        <button type="button" class="btn small" id="prSheetAdd" ${dis}>เพิ่มขนาด</button></div>
-      <h3 class="dlg-h3">ค่าใช้จ่ายอื่น</h3>
+        <button type="button" class="btn small" id="prSheetAdd" ${dis}>เพิ่มขนาดแผ่น</button></div>
+      <div class="grid2" style="margin-top:10px">
+        <label>เผื่อที่ clamp & วางแบบ (มม./ชิ้น)<input type="number" step="1" min="0" id="prMargin" value="${P.margin}" ${dis}></label>
+      </div>
+      <h3 class="dlg-h3">ค่าสี ค่าชุบ</h3>
       <div class="grid2">
-        <label>เผื่อที่ clamp และระยะวาง (มม./ชิ้น)<input type="number" step="1" min="0" id="prMargin" value="${P.margin}" ${dis}></label>
         <label>ค่าสี (บาท / ตร.ม.)<input type="number" step="10" min="0" id="prPaint" value="${P.paint_per_m2}" ${dis}></label>
-        <label>ค่าพับ (บาท / จุด)<input type="number" step="1" min="0" id="prBend" value="${P.bend_price}" ${dis}></label>
-        <label>ค่าแรงอื่น (บาท / ชิ้น)<input type="number" step="1" min="0" id="prLabor" value="${P.labor_per_piece}" ${dis}></label>
+        <label>ไม่ทาสีกับเหล็ก<input type="text" id="prNoPaint" value="${esc(P.no_paint.join(", "))}" placeholder="เช่น SUS" ${dis}></label>
         <label>ค่าชุบ (บาท / กก.)<input type="number" step="1" min="0" id="prPlate" value="${P.plating_per_kg}" ${dis}></label>
+        <label class="switch" style="align-self:end"><input type="checkbox" id="prIncPlate" ${P.include_plating ? "checked" : ""} ${dis}> รวมค่าชุบในราคารวม</label>
+      </div>
+      <h3 class="dlg-h3">ค่าใช้จ่ายอื่น</h3>
+      <p class="hint">เพิ่มรายการเองได้ เช่น ค่าพับ ค่าติ๊ก เจาะรู พ่นทราย ค่าขนส่ง · โปรแกรมนับจุดพับและรูให้เอง</p>
+      <table class="pt extra-pt"><thead><tr><th>ใช้</th><th>รายการ</th><th>บาท</th><th>คิด</th><th></th></tr></thead><tbody>
+        ${P.extras.map((e, i) => `<tr><td><input type="checkbox" data-e="${i}" data-f="on" ${e.on ? "checked" : ""} aria-label="ใช้ ${esc(e.name)}" ${dis}></td>
+          <td><input type="text" data-e="${i}" data-f="name" value="${esc(e.name)}" aria-label="ชื่อรายการ" ${dis}></td>
+          <td><input type="number" step="0.5" min="0" data-e="${i}" data-f="rate" value="${e.rate}" aria-label="ราคา ${esc(e.name)}" ${dis}></td>
+          <td><select data-e="${i}" data-f="unit" aria-label="คิดต่อ" ${dis}>${UNITS.map(([v, l]) => `<option value="${v}" ${e.unit === v ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+          <td><button type="button" class="btn small ghost" data-erm="${i}" ${dis}>ลบ</button></td></tr>`).join("")}
+      </tbody></table>
+      <button type="button" class="btn small" id="prExtraAdd" ${dis}>เพิ่มรายการ</button>
+      <div class="grid2" style="margin-top:14px">
         <label>บวกเพิ่ม (%)<input type="number" step="1" min="0" id="prMarkup" value="${P.markup_pct}" ${dis}></label>
-        <label>ไม่คิดค่าสีกับเหล็ก<input type="text" id="prNoPaint" value="${esc(P.no_paint.join(", "))}" placeholder="เช่น SUS" ${dis}></label>
-        <label class="switch" style="align-self:end"><input type="checkbox" id="prIncPlate" ${P.include_plating ? "checked" : ""} ${dis}> รวมค่าชุบในราคา</label>
       </div>
       ${DEMO ? `<p class="hint">${DEMO_MSG}</p>` : ""}
     </div>
     <div class="price-result" id="priceResult" aria-live="polite"></div>
   </div>`;
   const body = $("#priceBody");
-  body.querySelectorAll("input").forEach((i) => i.addEventListener(i.type === "checkbox" ? "change" : "input", schedulePrice));
-  body.querySelectorAll("[data-prm]").forEach((b) => (b.onclick = () => { syncPrice(); S.price.pricing.prices.splice(+b.dataset.prm, 1); renderPriceForm(); renderPriceResult(); pushPrice(); }));
+  body.querySelectorAll("input,select").forEach((i) => i.id !== "prAll" && i.addEventListener(i.type === "checkbox" || i.tagName === "SELECT" ? "change" : "input", schedulePrice));
+  $("#prAll").onchange = (e) => { syncPrice(); S.priceAll = e.target.checked; renderPriceForm(); renderPriceResult(); };
   body.querySelectorAll("[data-srm]").forEach((b) => (b.onclick = () => { syncPrice(); if (S.price.pricing.sheets.length < 2) return; S.price.pricing.sheets.splice(+b.dataset.srm, 1); renderPriceForm(); renderPriceResult(); pushPrice(); }));
-  $("#prAdd").onclick = () => { syncPrice(); S.price.pricing.prices.push({ material: "", t_min: 0, t_max: 0, price_kg: 0, kg_m2_mm: 8.0624 }); renderPriceForm(); const r = body.querySelectorAll(".price-pt tbody tr"); r[r.length - 1].querySelector("input").focus(); };
+  body.querySelectorAll("[data-erm]").forEach((b) => (b.onclick = () => { syncPrice(); S.price.pricing.extras.splice(+b.dataset.erm, 1); renderPriceForm(); renderPriceResult(); pushPrice(); }));
   $("#prSheetAdd").onclick = () => { syncPrice(); S.price.pricing.sheets.push({ w: 1220, l: 2440, on: true }); renderPriceForm(); };
+  $("#prExtraAdd").onclick = () => { syncPrice(); S.price.pricing.extras.push({ name: "", rate: 0, unit: "piece", on: true }); renderPriceForm(); const r = body.querySelectorAll(".extra-pt tbody tr"); r[r.length - 1].querySelector("input[type=text]").focus(); };
 }
 function syncPrice() {
   const P = S.price.pricing, M = S.price.meta, body = $("#priceBody");
   M.date = $("#prDate").value; M.customer = $("#prCust").value; M.note = $("#prNote").value;
-  body.querySelectorAll("[data-p]").forEach((i) => { const r = P.prices[+i.dataset.p]; r[i.dataset.f] = i.dataset.f === "material" ? i.value.trim() : +i.value || 0; });
+  body.querySelectorAll("[data-p]").forEach((i) => { P.prices[+i.dataset.p][i.dataset.f] = +i.value || 0; });
   body.querySelectorAll("[data-s]").forEach((i) => { const s = P.sheets[+i.dataset.s]; s[i.dataset.f] = i.dataset.f === "on" ? i.checked : +i.value || 0; });
-  P.margin = +$("#prMargin").value || 0; P.paint_per_m2 = +$("#prPaint").value || 0; P.bend_price = +$("#prBend").value || 0;
-  P.labor_per_piece = +$("#prLabor").value || 0; P.plating_per_kg = +$("#prPlate").value || 0; P.markup_pct = +$("#prMarkup").value || 0;
+  body.querySelectorAll("[data-e]").forEach((i) => { const e = P.extras[+i.dataset.e], f = i.dataset.f; e[f] = f === "on" ? i.checked : f === "rate" ? +i.value || 0 : i.value; });
+  P.margin = +$("#prMargin").value || 0; P.paint_per_m2 = +$("#prPaint").value || 0;
+  P.plating_per_kg = +$("#prPlate").value || 0; P.markup_pct = +$("#prMarkup").value || 0;
   P.include_plating = $("#prIncPlate").checked;
   P.no_paint = $("#prNoPaint").value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 }
@@ -1066,30 +1172,31 @@ async function pushPrice(saveDefault) {
   if (DEMO) return;
   syncPrice();
   const P = S.price.pricing;
-  const out = { ...P, prices: P.prices.filter((r) => r.material), sheets: P.sheets.filter((s) => s.w > 0 && s.l > 0) };
+  const out = { ...P, sheets: P.sheets.filter((s) => s.w > 0 && s.l > 0), extras: P.extras.filter((e) => e.name.trim()) };
   try {
     const r = await sendJSON(`/api/jobs/${S.jobId}/pricing`, "PUT", { pricing: out, meta: S.price.meta, save_default: !!saveDefault });
-    const keepPrices = S.price.pricing.prices, keepSheets = S.price.pricing.sheets;
-    S.price = r; S.price.pricing.prices = keepPrices; S.price.pricing.sheets = keepSheets;   // keep half-typed rows in the form
-    $("#priceMsg").textContent = saveDefault ? "ตั้งเป็นค่าเริ่มต้นของงานถัดไปแล้ว" : "";
+    const keepSheets = S.price.pricing.sheets, keepExtras = S.price.pricing.extras;
+    S.price = r; S.price.pricing.sheets = keepSheets; S.price.pricing.extras = keepExtras;   // keep half-typed rows in the form
+    $("#priceMsg").textContent = saveDefault ? "ตั้งเป็นค่าเริ่มต้นของงานถัดไปแล้ว (บันทึกในเครื่องนี้)" : "";
     renderPriceResult();
     return true;
   } catch (e) { $("#priceMsg").textContent = e.message; return false; }
 }
 function renderPriceResult() {
   const R = S.price, box = $("#priceResult"); if (!box) return;
-  const g = R.groups.map((x) => `<tr><td><b>${esc(x.code)}</b></td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.labor)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
-    <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ประมาณ ${v} แผ่น`).join(", ") || "-"}</td></tr>`).join("");
+  const g = R.groups.map((x) => `<tr><td><b>${esc(x.code)}</b></td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.extra, 2)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
+    <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ประมาณ ${v} แผ่น`).join(", ") || "-"}</td></tr>`).join("") +
+    R.job_extras.map((e) => `<tr><td colspan="6">${esc(e.name)} <small>(ต่องาน)</small></td><td class="n"><b>${baht(e.amount, 2)}</b></td></tr>`).join("");
   const rows = R.rows.map((r) => r.error ? `<tr class="err"><td>${esc(r.name)}</td><td colspan="6">${esc(r.error)}</td></tr>` :
     `<tr><td>${esc(r.name)}<small>${esc(r.code)} · ${fmt(r.x, 1)} × ${fmt(r.y, 1)} มม.</small></td>
-      <td>${r.sheet.w}×${r.sheet.l}<small>แบบ ${r.sheet.arr}${r.sheet.arr === 2 ? " หมุน 90°" : ""} · ${r.sheet.nx}×${r.sheet.ny} = ${r.sheet.count} ชิ้น</small></td>
-      <td class="n">${baht(r.metal)}</td><td class="n">${baht(r.paint)}</td><td class="n">${baht(r.labor, r.labor % 1 ? 2 : 0)}</td><td class="n">${r.qty}</td><td class="n"><b>${baht(r.total, 2)}</b></td></tr>`).join("");
+      <td>${r.sheet.w}×${r.sheet.l}<small>เรียงแบบ ${r.sheet.arr}${r.sheet.arr === 2 ? " (หมุน 90°)" : ""} · ${r.sheet.nx}×${r.sheet.ny} = ${r.sheet.count} ชิ้น</small></td>
+      <td class="n">${baht(r.metal)}</td><td class="n">${baht(r.paint)}</td><td class="n">${baht(r.extra, r.extra % 1 ? 2 : 0)}</td><td class="n">${r.qty}</td><td class="n"><b>${baht(r.total, 2)}</b></td></tr>`).join("");
   box.innerHTML = `
     <div class="price-total"><span>ราคารวม${R.markup ? " (รวมบวกเพิ่ม)" : ""}</span><b>${baht(R.total, 2)}</b><small>บาท · เหล็ก ${fmt(R.weight, 2)} กก.${R.markup ? ` · บวกเพิ่ม ${baht(R.markup, 2)}` : ""}</small></div>
     ${R.errors.length ? `<p class="err">${R.errors.length} ชิ้นคิดราคาไม่ได้ ดูแถวสีแดง</p>` : ""}
-    <table class="otable ptab"><thead><tr><th>กลุ่ม</th><th class="n">ชิ้น</th><th class="n">กก.</th><th class="n">เหล็ก</th><th class="n">สี</th><th class="n">แรง</th><th class="n">รวม</th></tr></thead><tbody>${g}</tbody></table>
+    <table class="otable ptab"><thead><tr><th>วัตถุดิบ</th><th class="n">ชิ้น</th><th class="n">กก.</th><th class="n">โลหะ</th><th class="n">สี</th><th class="n">อื่นๆ</th><th class="n">รวม</th></tr></thead><tbody>${g}</tbody></table>
     <h3 class="dlg-h3">รายชิ้น (ราคาต่อชิ้น)</h3>
-    <table class="otable ptab"><thead><tr><th>ชิ้นส่วน</th><th>แผ่นที่ใช้ · การวาง</th><th class="n">เหล็ก</th><th class="n">สี</th><th class="n">แรง</th><th class="n">จำนวน</th><th class="n">รวม</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <table class="otable ptab"><thead><tr><th>ชิ้นส่วน</th><th>แผ่นที่ใช้ · การวาง</th><th class="n">โลหะ</th><th class="n">สี</th><th class="n">อื่นๆ</th><th class="n">จำนวน</th><th class="n">รวม</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 async function priceXlsx() {
   if (DEMO) { download("pricing"); return; }
