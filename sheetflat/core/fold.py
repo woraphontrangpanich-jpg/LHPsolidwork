@@ -147,13 +147,12 @@ def fold_model(pc, thickness: float) -> dict:
             if out[i_pt] < 0:
                 out[i_pt] = int(i_reg)
         return out
-    walls = []
-    for l in pc.loops:
-        pts = np.asarray(l["pts"], float)
-        if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
-            pts = pts[:-1]
+    def split_at_bends(pts, closed):
+        """Insert a point wherever the polyline crosses a slice line of a bend zone, so that after folding
+        it follows the bent sheet (a segment that only had its two ends would be drawn as a chord)."""
         n = len(pts)
         Q = np.roll(pts, -1, axis=0)
+        nseg = n if closed else n - 1
         extra = [[] for _ in range(n)]                       # crossings (t along the segment) per segment
         for c, nrm, axv, lo_, hi_ in cuts:
             dp, dq = (pts - c) @ nrm, (Q - c) @ nrm
@@ -164,15 +163,22 @@ def fold_model(pc, thickness: float) -> dict:
             X = pts[hit] + tt[:, None] * (Q[hit] - pts[hit])
             along = (X - c) @ axv
             for i_seg, t_, ok in zip(hit, tt, (along >= lo_) & (along <= hi_)):
-                if ok:
+                if ok and i_seg < nseg:
                     extra[i_seg].append(float(t_))
         out = []
         for i in range(n):
             out.append(pts[i])
             for tt in sorted(extra[i]):
                 out.append(pts[i] + tt * (Q[i] - pts[i]))
-        reg = nearest_region(np.array(out))
-        walls.append({"pts": np.round(np.array(out), 4).tolist(), "reg": reg, "role": l["role"]})
+        return np.array(out)
+
+    walls = []
+    for l in pc.loops:
+        pts = np.asarray(l["pts"], float)
+        if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
+            pts = pts[:-1]
+        out = split_at_bends(pts, True)
+        walls.append({"pts": np.round(out, 4).tolist(), "reg": nearest_region(out), "role": l["role"]})
 
     # ---- drawing primitives (for length / hole / radius labels and picking), with their region
     prims = []
@@ -183,6 +189,8 @@ def fold_model(pc, thickness: float) -> dict:
         L = float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
         if len(pts) > 40:
             pts = pts[np.unique(np.linspace(0, len(pts) - 1, 40).round().astype(int))]
+        closed = q["t"] == "circle" or (len(pts) > 2 and np.allclose(pts[0], pts[-1]))
+        pts = split_at_bends(pts, False) if not closed else pts
         prims.append({"t": q["t"], "len": round(L, 3), "r": round(float(q["r"]), 3) if "r" in q else None,
                       "pts": np.round(pts, 4).tolist(), "reg": nearest_region(pts)})
 
