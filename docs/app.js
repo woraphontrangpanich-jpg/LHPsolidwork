@@ -1087,6 +1087,8 @@ async function openPricing() {
   renderPriceForm(); renderPriceResult();
   $("#priceDlg").showModal();
 }
+/* price of a 1220 x 2440 sheet at this row's thickness - the workbook's ROUNDUP(weight x price) x thickness */
+const platePrice = (r) => Math.ceil(+(r.kg_sheet * r.price_kg).toFixed(9)) * r.thickness;
 function priceCode(r) { return r.gauge ? matPrefix(r.material) + r.gauge : `${matPrefix(r.material)}#${fmtG(r.thickness)}mm`; }
 function renderPriceForm() {
   const P = S.price.pricing, M = S.price.meta;
@@ -1096,11 +1098,12 @@ function renderPriceForm() {
   const shown = P.prices.map((r, i) => ({ r, i })).filter(({ r }) => S.priceAll || isUsed(r));
   let lastMat = null;
   const priceRows = shown.map(({ r, i }) => {
-    const head = r.material !== lastMat ? `<tr class="mat-row"><td colspan="4">${esc(matName(r.material))}</td></tr>` : "";
+    const head = r.material !== lastMat ? `<tr class="mat-row"><td colspan="5">${esc(matName(r.material))}</td></tr>` : "";
     lastMat = r.material;
     return head + `<tr class="${isUsed(r) ? "used" : ""}"><td><b>${esc(priceCode(r))}</b></td><td class="n">${fmtG(r.thickness)}</td>
       <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="price_kg" value="${r.price_kg}" aria-label="ราคาต่อกิโลกรัม ${esc(priceCode(r))}" ${dis}></td>
-      <td><input type="number" step="0.5" min="0" data-p="${i}" data-f="kg_sheet" value="${r.kg_sheet}" aria-label="น้ำหนักแผ่น ${esc(priceCode(r))}" ${dis}></td></tr>`;
+      <td><input type="number" step="0.1" min="0" data-p="${i}" data-f="kg_plate" value="${+(r.kg_sheet * r.thickness).toFixed(2)}" aria-label="น้ำหนักแผ่น 4×8 ${esc(priceCode(r))}" ${dis}></td>
+      <td class="n plate-price" data-pp="${i}">${baht(platePrice(r))}</td></tr>`;
   }).join("");
   $("#priceBody").innerHTML = `
   <div class="price-grid">
@@ -1112,9 +1115,9 @@ function renderPriceForm() {
         <label style="grid-column:1/3">หมายเหตุ<input type="text" id="prNote" value="${esc(M.note)}" ${dis}></label>
       </div>
       <h3 class="dlg-h3">ราคาเหล็ก</h3>
-      <p class="hint">แยกตามชนิดเหล็กและความหนาในตารางค่ายืด · น้ำหนัก = กก. ของแผ่น 1220×2440 หนา 1 มม. (เหล็ก 24)</p>
+      <p class="hint">แยกตามชนิดเหล็กและความหนาในตารางค่ายืด · น้ำหนักและราคาเป็นของแผ่น 4×8 ฟุต (1220×2440) ที่ความหนาของแถวนั้น</p>
       <label class="switch"><input type="checkbox" id="prAll" ${S.priceAll ? "checked" : ""}> แสดงทุกความหนา (ปกติแสดงเฉพาะที่ใช้ในงานนี้)</label>
-      <table class="pt price-pt"><thead><tr><th>วัตถุดิบ</th><th class="n">หนา (มม.)</th><th>บาท / กก.</th><th>กก. / แผ่น 1 มม.</th></tr></thead><tbody>${priceRows}</tbody></table>
+      <table class="pt price-pt"><thead><tr><th>วัตถุดิบ</th><th class="n">หนา (มม.)</th><th>บาท / กก.</th><th>น้ำหนักแผ่น 4×8 (กก.)</th><th class="n">ราคาแผ่น 4×8</th></tr></thead><tbody>${priceRows}</tbody></table>
       <h3 class="dlg-h3">ขนาดแผ่นเหล็กที่มี</h3>
       <p class="hint">โปรแกรมลองวางทุกขนาดที่ติ๊กไว้ ทั้งเรียงแบบ 1 และแบบ 2 (หมุน 90°) แล้วเลือกแบบที่ค่าโลหะต่อชิ้นถูกที่สุด</p>
       <div class="sheet-list">${P.sheets.map((s, i) => `<span class="sheet-chip"><label class="switch"><input type="checkbox" data-s="${i}" data-f="on" ${s.on ? "checked" : ""} aria-label="ใช้แผ่น ${s.w}x${s.l}" ${dis}></label>
@@ -1149,6 +1152,7 @@ function renderPriceForm() {
     <div class="price-result" id="priceResult" aria-live="polite"></div>
   </div>`;
   const body = $("#priceBody");
+  body.querySelectorAll("[data-p]").forEach((i) => i.addEventListener("input", syncPrice));
   body.querySelectorAll("input,select").forEach((i) => i.id !== "prAll" && i.addEventListener(i.type === "checkbox" || i.tagName === "SELECT" ? "change" : "input", schedulePrice));
   $("#prAll").onchange = (e) => { syncPrice(); S.priceAll = e.target.checked; renderPriceForm(); renderPriceResult(); };
   body.querySelectorAll("[data-srm]").forEach((b) => (b.onclick = () => { syncPrice(); if (S.price.pricing.sheets.length < 2) return; S.price.pricing.sheets.splice(+b.dataset.srm, 1); renderPriceForm(); renderPriceResult(); pushPrice(); }));
@@ -1159,7 +1163,12 @@ function renderPriceForm() {
 function syncPrice() {
   const P = S.price.pricing, M = S.price.meta, body = $("#priceBody");
   M.date = $("#prDate").value; M.customer = $("#prCust").value; M.note = $("#prNote").value;
-  body.querySelectorAll("[data-p]").forEach((i) => { P.prices[+i.dataset.p][i.dataset.f] = +i.value || 0; });
+  body.querySelectorAll("[data-p]").forEach((i) => {
+    const r = P.prices[+i.dataset.p], v = +i.value || 0;
+    if (i.dataset.f === "kg_plate") r.kg_sheet = r.thickness ? v / r.thickness : 0;   // stored per 1 mm, like the workbook
+    else r[i.dataset.f] = v;
+    const pp = body.querySelector(`[data-pp="${i.dataset.p}"]`); if (pp) pp.textContent = baht(platePrice(r));
+  });
   body.querySelectorAll("[data-s]").forEach((i) => { const s = P.sheets[+i.dataset.s]; s[i.dataset.f] = i.dataset.f === "on" ? i.checked : +i.value || 0; });
   body.querySelectorAll("[data-e]").forEach((i) => { const e = P.extras[+i.dataset.e], f = i.dataset.f; e[f] = f === "on" ? i.checked : f === "rate" ? +i.value || 0 : i.value; });
   P.margin = +$("#prMargin").value || 0; P.paint_per_m2 = +$("#prPaint").value || 0;
