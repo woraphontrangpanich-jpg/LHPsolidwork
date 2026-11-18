@@ -61,6 +61,8 @@ class PartRecord:
     qty_override: int | None = None       # quantity typed by the user (per set)
     paint: bool | None = None             # None = automatic (painted unless the steel is in "no paint")
     plate: bool = False                   # plated (ชุบ)
+    shape: object = None                  # the OpenCASCADE solid (for the 3D view)
+    mesh: dict | None = None              # cached 3D mesh
     # computed
     pieces: list[FlatPiece] = field(default_factory=list)
     unfold_error: str = ""
@@ -138,7 +140,7 @@ class Project:
     def _analyze_part(self, pid, name, qty, solid, kw) -> PartRecord:
         sd = extract_solid(solid)
         rec = PartRecord(id=pid, name=name, qty=qty, sd=sd, analysis=None, measured_t=0.0,
-                         material_id=self.settings["material"], qty_asm=qty)
+                         material_id=self.settings["material"], qty_asm=qty, shape=solid)
         rec.bbox3 = tuple(float(x) for x in (sd.bbox[1] - sd.bbox[0]))
         try:
             an = analyze(sd)
@@ -582,6 +584,15 @@ class Project:
                         "cut_pieces": cut_pieces, "excluded_unique": len(excl),
                         "excluded_pieces": total_pieces - cut_pieces},
         }
+
+    def mesh_json(self, rec: PartRecord) -> dict:
+        """3D view of the part as modelled (folded): triangles, edge lines, bounding box, thickness."""
+        if rec.mesh is None:
+            from .brep import mesh_solid
+            if rec.shape is None:
+                raise ValueError("ไม่มีโมเดล 3D ของชิ้นนี้")
+            rec.mesh = mesh_solid(rec.shape, rec.sd.edges)
+        return {"id": rec.id, "name": rec.name, "t": rec.measured_t, **rec.mesh}
 
     def geometry_json(self, rec: PartRecord) -> dict:
         """Flat pattern geometry of one part for the preview (normalised to 0,0)."""

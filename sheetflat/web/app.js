@@ -10,9 +10,10 @@ const fmtG = (n) => String(Math.round(n * 1000) / 1000);
 const S = {
   jobId: null, project: null, profilesData: null,
   sel: null,            // {kind:'group'|'part', id}
-  sheetIdx: 0, version: 0, cache: new Map(), openGroups: new Set(),
+  sheetIdx: 0, version: 0, cache: new Map(), meshCache: new Map(), openGroups: new Set(),
   closedMats: new Set(), closedPlates: new Set(),   // folded sections of the DXF list
   editGroups: false, picked: new Set(),             // overview "edit groups" mode
+  view3d: false,                                    // part view: 2D flat pattern or 3D folded part
   price: null,
 };
 
@@ -26,6 +27,7 @@ function demoPath(path) {
   if ((m = path.match(/\/parts\/([^/]+)\/geometry$/))) return DEMO + `geom/${m[1]}.json`;
   if ((m = path.match(/\/groups\/([^/]+)\/layout\/(\d+)$/))) return DEMO + `layout/${m[1]}_${m[2]}.json`;
   if (path.match(/^\/api\/jobs\/[^/]+\/pricing$/)) return DEMO + "pricing.json";
+  if ((m = path.match(/\/parts\/([^/]+)\/mesh$/))) return DEMO + `mesh/${m[1]}.json`;
   return null;
 }
 async function api(path, opts = {}) {
@@ -690,7 +692,7 @@ class Viewer {
     cv.addEventListener("pointerleave", () => { this.hover = null; this.pt = null; this.draw(); setStatus(); });
     window.addEventListener("keydown", (e) => this.onKey(e));
     this.colors();
-    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { this.colors(); this.draw(); });
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { this.colors(); this.draw(); if (v3) v3.setColors(colors3d()); });
   }
   colors() {
     const cs = getComputedStyle(document.documentElement), g = (n) => cs.getPropertyValue(n).trim();
@@ -767,6 +769,10 @@ class Viewer {
   onKey(e) {
     if (e.target.closest("input,select,textarea,dialog")) return;
     const k = e.key.toLowerCase();
+    if (S.view3d && S.sel && S.sel.kind === "part") {
+      if (k === "f" && v3) v3.fit(); else if (k === "d") $("#t3Dim").click();
+      return;
+    }
     if (k === "f") this.fit();
     else if (k === "b") toggleOpt("bend"); else if (k === "d") toggleOpt("dim"); else if (k === "n") toggleOpt("name"); else if (k === "m") toggleOpt("measure");
     else if (e.key === "Escape") { this.measure = []; this.draw(); }
@@ -863,7 +869,7 @@ class Viewer {
     if (this.opts.measure && this.snap) {
       const [sx, sy] = this.w2s(...this.snap.p); ctx.strokeStyle = c.dim; ctx.lineWidth = 1.5; ctx.strokeRect(sx - 5, sy - 5, 10, 10);
     }
-    $("#stZoom").textContent = `1 px = ${fmt(1 / this.s, this.s > 4 ? 3 : 2)} มม.`;
+    if (!$("#cv").hidden) $("#stZoom").textContent = `1 px = ${fmt(1 / this.s, this.s > 4 ? 3 : 2)} มม.`;
   }
   tracePrim(q) {
     const ctx = this.ctx;
@@ -995,7 +1001,15 @@ async function loadScene() {
   $("#stageEmpty").hidden = !!sel;
   if (!sel) { viewer.setScene(null); return; }
   const isOv = sel.kind === "overview";
-  $("#overview").hidden = !isOv; $(".stage-bar .tools").hidden = isOv; $(".legend").hidden = isOv; $(".statusbar").hidden = isOv;
+  const want3d = !isOv && sel.kind === "part" && S.view3d;
+  $("#viewSeg").hidden = !(sel.kind === "part");
+  $("#v2d").setAttribute("aria-pressed", String(!want3d)); $("#v3d").setAttribute("aria-pressed", String(want3d));
+  $("#overview").hidden = !isOv; $("#tools2d").hidden = isOv || want3d; $("#tools3d").hidden = !want3d;
+  $(".legend").hidden = isOv || want3d; $(".statusbar").hidden = isOv;
+  const cvWasHidden = $("#cv").hidden;
+  $("#cv").hidden = want3d; $("#wrap3d").hidden = !want3d;
+  if (cvWasHidden && !want3d) viewer.resize();
+  if (want3d) { await show3d(part(sel.id)); return; }
   if (isOv) { $("#stageTitle").innerHTML = `ภาพรวมงาน<small>รายการตัดแยกตามความหนา</small>`; renderOverview(); return; }
   const key = sel.kind + sel.id + ":" + S.sheetIdx + ":" + S.version;
   let sc = S.cache.get(key);
@@ -1024,6 +1038,50 @@ async function loadScene() {
   $("#stageTitle").innerHTML = `${esc(sc.title)}<small>${esc(sc.sub)}</small>`;
   $("#stageEmpty").hidden = sc.items.length > 0;
   viewer.setScene(sc.items.length ? sc : null);
+}
+/* ---- 3D view of the selected part (three.js, loaded on first use) ---- */
+let v3 = null;
+function colors3d() {
+  const cs = getComputedStyle(document.documentElement), g = (n) => cs.getPropertyValue(n).trim();
+  return { zinc: g("--zinc-100"), ink: g("--ink"), dim: g("--dim"), paper: g("--paper"), steel: g("--steel"),
+           steelFill: g("--zinc-300"), font: g("--font") };
+}
+async function ensure3d() {
+  if (v3) return v3;
+  const mod = await import("./viewer3d.js");
+  v3 = new mod.Viewer3D($("#wrap3d"), (e) => {
+    const info = $("#stInfo");
+    if (!e) { info.textContent = "ลากเพื่อหมุน · คลิกขวาลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ชี้ที่ขอบเพื่อดูความยาว"; return; }
+    info.innerHTML = e.kind === "circle" ? `ขอบโค้ง <b>R ${fmt(e.r)} มม.</b> · ยาว ${fmt(e.len)} มม.` : `ขอบ ยาว <b>${fmt(e.len)} มม.</b>${e.kind === "line" ? "" : " (เส้นโค้ง)"}`;
+  });
+  v3.setColors(colors3d());
+  return v3;
+}
+async function show3d(p) {
+  const sel = S.sel;
+  $("#stageEmpty").hidden = true;
+  $("#stCoord").textContent = "3D"; $("#stZoom").textContent = "";
+  $("#stInfo").textContent = "กำลังโหลดโมเดล 3D…";
+  try {
+    const viewer = await ensure3d();
+    const key = "mesh:" + p.id;
+    let m = S.meshCache.get(key);
+    if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/mesh`); S.meshCache.set(key, m); }
+    if (S.sel !== sel) return;
+    const s = m.bbox[1].map((v, i) => v - m.bbox[0][i]);
+    $("#stageTitle").innerHTML = `${esc(p.name)}<small>3D พับแล้ว · ${fmt(s[0], 1)} × ${fmt(s[1], 1)} × ${fmt(s[2], 1)} มม.${m.t ? ` · หนา ${fmt(m.t, 2)} มม.` : ""}</small>`;
+    viewer.resize(); viewer.load(m);
+    $("#stZoom").textContent = "";
+    $("#stInfo").textContent = "ลากเพื่อหมุน · คลิกขวาลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ชี้ที่ขอบเพื่อดูความยาว";
+  } catch (e) {
+    $("#stInfo").textContent = "เปิด 3D ไม่ได้: " + e.message;
+    toast("เปิด 3D ไม่ได้: " + e.message, 4000);
+  }
+}
+function setView3d(on) {
+  if (S.view3d === on) return;
+  S.view3d = on;
+  loadScene();
 }
 function shiftItem(it, dx) {
   it.prims = it.prims.map((q) => { const r = { ...q }; const f = ([x, y]) => [x + dx, y]; if (q.t === "line") { r.a = f(q.a); r.b = f(q.b); } else if (q.t === "poly") r.pts = q.pts.map(f); else r.c = f(q.c); return r; });
@@ -1287,6 +1345,7 @@ function applyTheme(t) {
   $("#themeLabel").textContent = THEMES.find((x) => x[0] === t)[1];
   $("#btnTheme").setAttribute("aria-label", "สีหน้าจอ: " + THEMES.find((x) => x[0] === t)[1] + " (กดเพื่อเปลี่ยน)");
   if (viewer) { viewer.colors(); viewer.draw(); }
+  if (v3) v3.setColors(colors3d());
 }
 function initTheme() {
   let t = "auto";
@@ -1313,12 +1372,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#priceDefault").onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } clearTimeout(schedulePrice._t); pushPrice(true); };
   $("#priceForm").addEventListener("submit", (e) => e.preventDefault());
   $("#tFit").onclick = () => viewer.fit();
+  $("#v2d").onclick = () => setView3d(false);
+  $("#v3d").onclick = () => setView3d(true);
+  $("#t3Fit").onclick = () => v3 && v3.fit();
+  $("#t3Dim").onclick = () => { if (!v3) return; const on = !v3.showDims; v3.setDims(on); $("#t3Dim").setAttribute("aria-pressed", String(on)); };
+  document.querySelectorAll("[data-view3]").forEach((b) => (b.onclick = () => v3 && v3.view(b.dataset.view3)));
   $("#tBend").onclick = () => toggleOpt("bend"); $("#tDim").onclick = () => toggleOpt("dim");
   $("#tName").onclick = () => toggleOpt("name"); $("#tMeasure").onclick = () => toggleOpt("measure");
   $("#btnAll").onclick = () => download("all");
   $("#btnXlsx").onclick = () => download("xlsx");
   $("#btnProfile").onclick = openProfileDialog;
-  $("#btnNew").onclick = () => { S.jobId = null; S.project = null; S.sel = null; S.cache.clear(); S.editGroups = false; S.picked.clear(); S.price = null; $("#topJob").hidden = true; $("#topActions").hidden = true; $("#file").value = ""; backToLanding(""); };
+  $("#btnNew").onclick = () => { S.jobId = null; S.project = null; S.sel = null; S.cache.clear(); S.meshCache.clear(); S.editGroups = false; S.picked.clear(); S.price = null; $("#topJob").hidden = true; $("#topActions").hidden = true; $("#file").value = ""; backToLanding(""); };
   $("#profileForm").addEventListener("submit", (e) => { if (e.submitter && e.submitter.id === "profileSave") saveProfiles(e); });
   $("#profileSel").addEventListener("change", (e) => patchSettings({ profile: e.target.value }));
   if (DEMO) {

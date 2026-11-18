@@ -85,7 +85,12 @@ async def local_only(request, call_next):
         if origin is not None and request.method not in ("GET", "HEAD", "OPTIONS") \
                 and _hostname(origin) not in LOCAL_HOSTS:
             return PlainTextResponse("SheetFlat: request from another site blocked", status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        # the page and its scripts must always match (after an update an old cached page would break)
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def _expire_jobs():
@@ -426,6 +431,18 @@ def part_geometry(jid: str, pid: str):
         raise HTTPException(404, "ไม่พบชิ้นส่วน")
     with pr.lock:
         return pr.geometry_json(rec)
+
+
+@app.get("/api/jobs/{jid}/parts/{pid}/mesh")
+def part_mesh(jid: str, pid: str):
+    pr = get_job(jid)
+    rec = next((r for r in pr.parts if r.id == pid), None)
+    if rec is None:
+        raise HTTPException(404, "ไม่พบชิ้นส่วน")
+    try:
+        return pr.mesh_json(rec)
+    except ValueError as ex:
+        raise HTTPException(404, str(ex))
 
 
 @app.get("/api/jobs/{jid}/groups/{gid}/layout/{idx}")

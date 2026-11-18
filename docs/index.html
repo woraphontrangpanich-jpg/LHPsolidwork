@@ -172,7 +172,19 @@
   <section class="stage" aria-label="พรีวิว DXF">
     <div class="stage-bar">
       <div class="stage-title" id="stageTitle"></div>
-      <div class="tools" role="toolbar" aria-label="เครื่องมือดู">
+      <div class="seg" id="viewSeg" role="group" aria-label="มุมมองชิ้นงาน" hidden>
+        <button class="seg-btn" id="v2d" aria-pressed="true" title="แบบคลี่ 2D">2D แบบคลี่</button>
+        <button class="seg-btn" id="v3d" aria-pressed="false" title="ชิ้นงานพับแล้ว 3D หมุนดูได้">3D</button>
+      </div>
+      <div class="tools" id="tools3d" role="toolbar" aria-label="เครื่องมือ 3D" hidden>
+        <button class="tool" id="t3Fit" title="ดูทั้งหมด (F)">ดูทั้งหมด</button>
+        <button class="tool toggle" id="t3Dim" aria-pressed="true" title="ขนาดรวม (D)">ขนาด</button>
+        <button class="tool" data-view3="front" title="มองด้านหน้า">หน้า</button>
+        <button class="tool" data-view3="top" title="มองด้านบน">บน</button>
+        <button class="tool" data-view3="right" title="มองด้านข้าง">ข้าง</button>
+        <button class="tool" data-view3="iso" title="มุมเอียง 3 มิติ">ไอโซ</button>
+      </div>
+      <div class="tools" id="tools2d" role="toolbar" aria-label="เครื่องมือดู">
         <button class="tool" id="tFit" title="ดูทั้งหมด (F)">ดูทั้งหมด</button>
         <button class="tool toggle" id="tBend" aria-pressed="true" title="เส้นพับ (B)">เส้นพับ</button>
         <button class="tool toggle" id="tDim" aria-pressed="true" title="ขนาด (D)">ขนาด</button>
@@ -182,6 +194,7 @@
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="cv"></canvas>
+      <div class="wrap3d" id="wrap3d" hidden></div>
       <div class="overview" id="overview" hidden></div>
       <div class="legend">
         <span><i class="lg cut"></i>เส้นตัด</span>

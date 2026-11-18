@@ -477,3 +477,13 @@ table.pt .mat-sel { min-width: 112px; }
 .qmark { display: block; font-size: 10.5px; font-weight: 400; color: var(--warn); }
 .ptab .tick { text-align: center; width: 44px; }
 .ptab .tick input { width: 16px; height: 16px; cursor: pointer; }
+
+/* ---------- 2D / 3D switch and 3D view ---------- */
+.seg { display: inline-flex; border: 1px solid var(--zinc-300); border-radius: var(--radius); overflow: hidden; }
+.seg-btn { border: 0; background: var(--paper); padding: 4px 12px; font-size: 13px; cursor: pointer; color: var(--steel); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--zinc-300); }
+.seg-btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.wrap3d { position: absolute; inset: 0; }
+.cv3d { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
+.cv3d:active { cursor: grabbing; }
+.cv3d-labels { position: absolute; inset: 0; pointer-events: none; }

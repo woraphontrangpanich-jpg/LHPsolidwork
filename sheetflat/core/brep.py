@@ -239,3 +239,50 @@ def _extract_face(face, fid: int, emap) -> Face:
         f.loops.append(loop)
         f.edge_ids.extend(eid for eid, _ in loop)
     return f
+
+
+def mesh_solid(solid, edges=None) -> dict:
+    """Triangles of the solid for the 3D view, plus its edges as polylines (part coordinates, mm).
+
+    ``edges`` = the Edge list of the same solid (already sampled), drawn as the outline lines."""
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.TopLoc import TopLoc_Location
+
+    bb = Bnd_Box()
+    BRepBndLib.Add_s(solid, bb)
+    lo, hi = _v(bb.CornerMin()), _v(bb.CornerMax())
+    diag = float(np.linalg.norm(hi - lo)) or 1.0
+    BRepMesh_IncrementalMesh(solid, max(0.02, diag * 0.0006), False, 0.35, True)
+    pos, idx = [], []
+    exp = TopExp_Explorer(solid, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face(exp.Current())
+        loc = TopLoc_Location()
+        tri = BRep_Tool.Triangulation_s(face, loc)
+        if tri is not None:
+            trsf = loc.Transformation()
+            base = len(pos) // 3
+            for i in range(1, tri.NbNodes() + 1):
+                q = tri.Node(i).Transformed(trsf)
+                pos += [q.X(), q.Y(), q.Z()]
+            rev = face.Orientation() == TopAbs_REVERSED
+            for i in range(1, tri.NbTriangles() + 1):
+                a, b, c = tri.Triangle(i).Get()
+                if rev:
+                    b, c = c, b
+                idx += [base + a - 1, base + b - 1, base + c - 1]
+        exp.Next()
+    lines = []
+    for e in edges or []:
+        pts = np.asarray(e.pts, dtype=float)
+        if e.kind == "line" or len(pts) <= 2:
+            pts = np.array([e.p0, e.p1], dtype=float)
+        elif len(pts) > 64:                                   # display only: 64 points per curve are plenty
+            keep = np.unique(np.linspace(0, len(pts) - 1, 64).round().astype(int))
+            pts = pts[keep]
+        lines.append({"pts": np.round(pts, 3).ravel().tolist(), "len": round(float(e.length), 3),
+                      "kind": e.kind, "r": round(float(e.radius), 3) if getattr(e, "radius", None) else None})
+    return {"pos": [round(v, 3) for v in pos], "idx": idx, "edges": lines,
+            "bbox": [np.round(lo, 3).tolist(), np.round(hi, 3).tolist()]}

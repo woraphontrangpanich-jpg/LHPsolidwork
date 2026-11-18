@@ -228,3 +228,17 @@ def test_quantities_sets_paint_and_plating(client, job):
     d = wb["รายละเอียด"]
     assert d["AC4"].value.startswith("ทาสี") and d["AD4"].value.startswith("ชุบ")
     assert d["I6"].value.startswith("=IF(AC6=1") and d["J6"].value.startswith("=IF(AND(AD6=1")
+
+
+def test_3d_mesh_of_a_part(client, job):
+    jid, P = job
+    hook = next(p for p in P["parts"] if p["name"] == "Hook")
+    m = client.get(f"/api/jobs/{jid}/parts/{hook['id']}/mesh").json()
+    assert len(m["pos"]) % 3 == 0 and len(m["idx"]) % 3 == 0 and max(m["idx"]) < len(m["pos"]) // 3
+    assert m["t"] == pytest.approx(2.0, abs=0.01) and len(m["edges"]) > 10
+    size = sorted(round(hi - lo, 1) for lo, hi in zip(*m["bbox"]))
+    assert size == [30.0, 45.0, 122.6]                         # Hook as modelled (folded)
+    assert client.get(f"/api/jobs/{jid}/parts/nope/mesh").status_code == 404
+    # the page and its scripts are never served stale after an update
+    assert client.get("/", headers={"host": "127.0.0.1"}).headers["cache-control"] == "no-cache"
+    assert client.get("/static/vendor/three.module.min.js").status_code == 200
