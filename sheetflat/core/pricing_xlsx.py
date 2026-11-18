@@ -335,7 +335,7 @@ def build_pricing_xlsx(project) -> bytes:
     r += 2
     _put(S, (r, 1), "สรุปราคาแยกตามวัตถุดิบ", font=F_H2, border=None)
     r += 1
-    heads = ["วัตถุดิบ", "ความหนา (มม.)", "จำนวนชิ้น", "น้ำหนัก (กก.)", "ค่าโลหะ", "ค่าสี", "ค่าใช้จ่ายอื่น", "ค่าชุบ",
+    heads = ["กลุ่ม / วัตถุดิบ", "ความหนา (มม.)", "จำนวนชิ้น", "น้ำหนัก (กก.)", "ค่าโลหะ", "ค่าสี", "ค่าใช้จ่ายอื่น", "ค่าชุบ",
              "ราคารวม", "แผ่นที่ใช้ (ประมาณ)"]
     for i, h in enumerate(heads):
         _head(S, (r, 1 + i), h, fill=GOLD if h == "ราคารวม" else GREY2)
@@ -343,15 +343,17 @@ def build_pricing_xlsx(project) -> bytes:
     rng = lambda L: f"'{DETAIL}'!${L}${first}:${L}${max(last, first)}"  # noqa: E731
     g0 = r
     for g in res["groups"]:
-        _put(S, (r, 1), g["code"], font=F_HEAD, align=CENTER)
+        code = '"' + g["code"].replace('"', '""') + '"'             # detail column B holds the steel code
+        label = g["code"] if g.get("name", g["code"]) == g["code"] else f'{g["name"]} ({g["code"]})'
+        _put(S, (r, 1), label, font=F_HEAD, align=CENTER)
         _put(S, (r, 2), g["thickness"], font=F_CELL, align=CENTER)
-        _put(S, (r, 3), f"=SUMIF({rng('B')},A{r},{rng('K')})", fmt=ACC0)
-        _put(S, (r, 4), f"=SUMIF({rng('B')},A{r},{rng('L')})", fmt=ACC2)
-        _put(S, (r, 5), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng('H')})*{rng('K')})", fmt=ACC0)
-        _put(S, (r, 6), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng('I')})*{rng('K')})", fmt=ACC0)
-        _put(S, (r, 7), f"=SUMPRODUCT(({rng('B')}=A{r})*N(+{rng(EXT)})*{rng('K')})", fmt=ACC2)
-        _put(S, (r, 8), f"=SUMIF({rng('B')},A{r},{rng('J')})", fmt=ACC2)
-        _put(S, (r, 9), f"=SUMIF({rng('B')},A{r},{rng('M')})", fill=GOLD, fmt=ACC2)
+        _put(S, (r, 3), f"=SUMIF({rng('B')},{code},{rng('K')})", fmt=ACC0)
+        _put(S, (r, 4), f"=SUMIF({rng('B')},{code},{rng('L')})", fmt=ACC2)
+        _put(S, (r, 5), f"=SUMPRODUCT(({rng('B')}={code})*N(+{rng('H')})*{rng('K')})", fmt=ACC0)
+        _put(S, (r, 6), f"=SUMPRODUCT(({rng('B')}={code})*N(+{rng('I')})*{rng('K')})", fmt=ACC0)
+        _put(S, (r, 7), f"=SUMPRODUCT(({rng('B')}={code})*N(+{rng(EXT)})*{rng('K')})", fmt=ACC2)
+        _put(S, (r, 8), f"=SUMIF({rng('B')},{code},{rng('J')})", fmt=ACC2)
+        _put(S, (r, 9), f"=SUMIF({rng('B')},{code},{rng('M')})", fill=GOLD, fmt=ACC2)
         _put(S, (r, 10), ", ".join(f"{k} × {v}" for k, v in g["sheets"].items()) or "-", font=F_CELL)
         r += 1
     g1 = r - 1

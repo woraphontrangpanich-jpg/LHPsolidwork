@@ -371,6 +371,20 @@ def add_material(jid: str, body: dict):
     return {"profiles": store.data, "project": pr.to_json()}
 
 
+@app.post("/api/jobs/{jid}/rename")
+def rename_group(jid: str, body: dict):
+    """body = {"key": "ZN|0.7", "name": "..."} for a DXF group, or {"category": "old", "name": "new"}"""
+    pr = get_job(jid)
+    try:
+        if "category" in body:
+            pr.rename_category(str(body["category"]), body.get("name"))
+        else:
+            pr.rename_group(str(body.get("key") or ""), body.get("name"))
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    return pr.to_json()
+
+
 @app.get("/api/jobs/{jid}/pricing")
 def get_pricing(jid: str):
     return get_job(jid).price()

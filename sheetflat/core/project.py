@@ -75,7 +75,9 @@ class Group:
     id: str
     material_id: str
     thickness: float
-    code: str
+    code: str                             # steel code from the bend table, e.g. ZN#22 (price lookups)
+    name: str = ""                        # shown name and DXF file name part; the user can rename it
+    key: str = ""                         # "ZN|0.7" - identifies the group across recomputes
     part_ids: list[str] = field(default_factory=list)
     filename: str = ""
     sheets: list[Sheet] = field(default_factory=list)
@@ -100,6 +102,7 @@ class Project:
         self.source_path = ""                 # STEP file kept for "save job"
         self.pricing = copy.deepcopy(store.data.get("pricing")) or validate_pricing(None)
         self.pricing_meta = {"date": "", "customer": "", "note": ""}
+        self.group_names: dict[str, str] = {}   # "ZN|0.7" -> name the user gave the DXF group
 
     # ------------------------------------------------------------------ profile
     @property
@@ -239,7 +242,9 @@ class Project:
             key = (mat["id"], t)
             g = gmap.get(key)
             if g is None:
-                g = Group(id=f"g{len(gmap) + 1}", material_id=mat["id"], thickness=t, code=code)
+                gkey = f"{mat['id']}|{t:g}"
+                g = Group(id=f"g{len(gmap) + 1}", material_id=mat["id"], thickness=t, code=code,
+                          name=self.group_names.get(gkey) or code, key=gkey)
                 gmap[key] = g
                 order.append(g)
             g.part_ids.append(rec.id)
@@ -248,7 +253,7 @@ class Project:
             g.id = f"g{i + 1}"
         used_names: dict[str, int] = {}
         for g in order:
-            base = self.settings["filename"].format(job=safe_name(self.job_name), code=g.code, t=fmt_t(g.thickness),
+            base = self.settings["filename"].format(job=safe_name(self.job_name), code=g.name, t=fmt_t(g.thickness),
                                                     material=g.material_id)
             base = safe_name(base)
             n = used_names.get(base, 0) + 1
@@ -351,6 +356,34 @@ class Project:
                         rec.flat_key = None
             self.recompute()
 
+    def rename_group(self, key: str, name: str):
+        """Name a DXF group (empty -> back to the steel code). The name is used for the DXF file name."""
+        with self.lock:
+            name = re.sub(r'[\\/:*?"<>|\r\n\t]+', "", str(name or "")).strip()[:60]
+            if not any(g.key == key for g in self.groups):
+                raise ValueError("ไม่พบกลุ่มนี้")
+            other = {g.name for g in self.groups if g.key != key}
+            if name and name in other:
+                raise ValueError(f"มีกลุ่มชื่อ “{name}” อยู่แล้ว")
+            if name:
+                self.group_names[key] = name
+            else:
+                self.group_names.pop(key, None)
+            self._rebuild_groups()
+
+    def rename_category(self, old: str, name: str):
+        """Rename a not-cut group (e.g. ซื้อสำเร็จรูป -> ลูกค้าส่งมาเอง)."""
+        with self.lock:
+            name = str(name or "").strip()[:60]
+            if not name:
+                raise ValueError("กรุณาใส่ชื่อกลุ่ม")
+            hit = [r for r in self.parts if r.category == old]
+            if not hit:
+                raise ValueError("ไม่พบกลุ่มนี้")
+            for r in hit:
+                r.category = name
+            self.recompute()
+
     # ------------------------------------------------------------------ pricing
     def set_pricing(self, pricing: dict | None = None, meta: dict | None = None):
         with self.lock:
@@ -380,7 +413,7 @@ class Project:
             "job": self.job_name, "source": self.source_name,
             "settings": self.settings, "profile": self.profile,
             "materials": self.store.data["materials"],
-            "pricing": self.pricing, "pricing_meta": self.pricing_meta,
+            "pricing": self.pricing, "pricing_meta": self.pricing_meta, "group_names": self.group_names,
             "parts": [{"id": r.id, "name": r.name, "include": r.include, "material_id": r.material_id,
                        "t_override": r.t_override, "flip": r.flip, "category": r.category} for r in self.parts],
         }
@@ -406,6 +439,8 @@ class Project:
                 rec.flat_key = None
             if st.get("pricing"):
                 self.pricing = validate_pricing(st["pricing"])
+            if isinstance(st.get("group_names"), dict):
+                self.group_names = {str(k): str(v)[:60] for k, v in st["group_names"].items() if str(v).strip()}
             if st.get("pricing_meta"):
                 self.set_pricing(meta=st["pricing_meta"])
             self.recompute()
@@ -492,6 +527,7 @@ class Project:
                          for pid in g.part_ids) * float(self.store.data.get("density", 7.85)) * 1e-6
             groups.append({"id": g.id, "code": g.code, "material_id": g.material_id, "thickness": g.thickness,
                            "filename": g.filename + ".dxf", "part_ids": g.part_ids, "sheets": sheets,
+                           "name": g.name, "key": g.key, "renamed": g.name != g.code,
                            "pieces": pieces, "area": round(area, 0), "weight_kg": round(weight, 2)})
         excl = [p for p in parts if not p["include"]]
         total_pieces = sum(p["qty"] for p in parts)

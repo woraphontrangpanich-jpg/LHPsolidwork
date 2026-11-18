@@ -460,3 +460,12 @@ table.pt .mat-sel { min-width: 112px; }
 .price-pt td.n { text-align: right; }
 .extra-pt td:first-child, .extra-pt th:first-child { width: 34px; text-align: center; }
 .extra-pt select { width: 100%; }
+
+/* ---------- rename groups ---------- */
+.rename-btn { margin-left: 8px; padding: 2px 8px; font-size: 12px; font-weight: 400; color: var(--steel); background: none;
+  border: 1px solid var(--zinc-200); border-radius: 12px; cursor: pointer; vertical-align: middle; }
+.rename-btn:hover { color: var(--ink); border-color: var(--zinc-300); }
+.rename-form { display: inline-flex; gap: 6px; align-items: center; }
+.rename-form input { width: 220px; font-size: 15px; font-weight: 500; }
+.steel-code, .plate-steel { color: var(--steel); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.plate-steel { display: inline; }

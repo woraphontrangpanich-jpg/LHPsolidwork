@@ -157,3 +157,32 @@ def test_bend_row_for_one_steel_only(tmp_path):
     assert match_row(prof, 0.7, "SUS")["bd"] == 1.4
     assert match_row(prof, 0.7, "ZN")["bd"] == 1.25
     assert match_row(prof, 0.7, None)["bd"] == 1.25
+
+
+def test_rename_groups(client, job):
+    jid, P = job
+    g = next(x for x in P["groups"] if x["code"] == "ZN#22")
+    P = client.post(f"/api/jobs/{jid}/rename", json={"key": g["key"], "name": "ตัวตู้"}).json()
+    g2 = next(x for x in P["groups"] if x["key"] == g["key"])
+    assert g2["name"] == "ตัวตู้" and g2["renamed"] and "ตัวตู้" in g2["filename"] and g2["code"] == "ZN#22"
+    other = next(x for x in P["groups"] if x["key"] != g["key"])
+    assert client.post(f"/api/jobs/{jid}/rename", json={"key": other["key"], "name": "ตัวตู้"}).status_code == 400
+    # the name stays after recomputing and in a saved job file
+    client.patch(f"/api/jobs/{jid}/settings", json={"gap": 12})
+    blob = client.get(f"/api/jobs/{jid}/save").content
+    jid2 = client.post("/api/load", files={"file": ("a.sheetflat", blob)}).json()["id"]
+    after = wait(client, jid2)
+    assert next(x for x in after["groups"] if x["key"] == g["key"])["name"] == "ตัวตู้"
+    # pricing still finds the steel price; the summary page shows the name
+    r = client.get(f"/api/jobs/{jid}/pricing").json()
+    assert not r["errors"] and any(x["name"] == "ตัวตู้" for x in r["groups"])
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/jobs/{jid}/export/pricing").content))
+    assert any(c.value == "ตัวตู้ (ZN#22)" for row in wb["สรุป"].iter_rows() for c in row)
+    # empty name -> back to the steel code
+    P = client.post(f"/api/jobs/{jid}/rename", json={"key": g["key"], "name": ""}).json()
+    assert next(x for x in P["groups"] if x["key"] == g["key"])["name"] == "ZN#22"
+    # not-cut groups
+    hook = next(p for p in P["parts"] if p["name"] == "Hook")
+    client.post(f"/api/jobs/{jid}/move", json={"ids": [hook["id"]], "target": {"category": "ซื้อสำเร็จรูป"}})
+    P = client.post(f"/api/jobs/{jid}/rename", json={"category": "ซื้อสำเร็จรูป", "name": "ลูกค้าส่งมาเอง"}).json()
+    assert next(p for p in P["parts"] if p["name"] == "Hook")["category"] == "ลูกค้าส่งมาเอง"

@@ -227,7 +227,7 @@ function groupHTML(g) {
   return `<div class="plate ${selG ? "sel" : ""}">
     <div class="plate-top">
     <button class="plate-head" data-group="${g.id}" aria-label="ดูไฟล์ ${esc(g.filename)}">
-      <span class="plate-code">${esc(g.code)}</span>
+      <span class="plate-code">${esc(g.name)}${g.renamed ? `<small class="plate-steel">${esc(g.code)}</small>` : ""}</span>
       <span class="plate-t"><i class="tbar" style="height:${tpx}px"></i><b>${fmtG(g.thickness)} มม.</b></span>
       <span class="plate-file">${esc(g.filename)}</span>
       <span class="plate-sum">${g.pieces} ชิ้น · ${g.part_ids.length} แบบ · ${g.sheets.length > 1 ? g.sheets.length + " แผ่น" : fmt(g.sheets[0].w, 0) + " × " + fmt(g.sheets[0].h, 0) + " มม."}</span>
@@ -330,7 +330,8 @@ function renderOverview() {
     }).join("");
     const tpx = Math.max(3, Math.round(g.thickness * 5));
     return `<section class="ogroup"><div class="ogroup-head">
-        <h3><button class="linkish" data-group="${g.id}">${esc(g.code)}</button></h3>
+        <h3>${renameBox("g", g.key, g.name) || `<button class="linkish" data-group="${g.id}">${esc(g.name)}</button>${g.renamed ? ` <small class="steel-code">${esc(g.code)}</small>` : ""}
+          <button class="rename-btn" data-rename="g|${esc(g.key)}" title="เปลี่ยนชื่อกลุ่ม (ใช้เป็นชื่อไฟล์ DXF)" aria-label="เปลี่ยนชื่อกลุ่ม ${esc(g.name)}">เปลี่ยนชื่อ</button>`}</h3>
         <span class="tb"><i class="tbar" style="height:${tpx}px"></i>หนา ${fmtG(g.thickness)} มม.</span>
         <button class="btn small" ${g.sheets.length > 1 ? `data-group="${g.id}">ดู ${g.sheets.length} แผ่น` : `data-dl="dxf/${g.id}/0">ดาวน์โหลด DXF`}</button>
         <span class="meta">${esc(g.sheets.map((x) => x.filename).join(", "))} · ${g.part_ids.length} แบบ · ${g.pieces} ชิ้น · ${fmt(g.weight_kg, 2)} กก.</span></div>
@@ -342,7 +343,7 @@ function renderOverview() {
   const cats = [];
   ex.forEach((p) => { const k = p.category || ""; let c = cats.find((x) => x.k === k); if (!c) cats.push((c = { k, parts: [] })); c.parts.push(p); });
   cats.sort((a, b) => (a.k ? 0 : 1) - (b.k ? 0 : 1));
-  const exHTML = cats.map((c) => `<section class="ogroup"><div class="ogroup-head"><h3>${c.k ? esc(c.k) : "ไม่นำไปตัด"}</h3><span class="tb">${c.k ? "กลุ่มที่ตั้งเอง · ไม่ตัด ไม่อยู่ใน DXF" : "ท่อ ชิ้นส่วนซื้อ หรือชิ้นที่คลี่ไม่ได้"}</span><span></span></div>
+  const exHTML = cats.map((c) => `<section class="ogroup"><div class="ogroup-head"><h3>${c.k ? (renameBox("c", c.k, c.k) || `${esc(c.k)} <button class="rename-btn" data-rename="c|${esc(c.k)}" aria-label="เปลี่ยนชื่อกลุ่ม ${esc(c.k)}">เปลี่ยนชื่อ</button>`) : "ไม่นำไปตัด"}</h3><span class="tb">${c.k ? "กลุ่มที่ตั้งเอง · ไม่ตัด ไม่อยู่ใน DXF" : "ท่อ ชิ้นส่วนซื้อ หรือชิ้นที่คลี่ไม่ได้"}</span><span></span></div>
     <table class="otable"><thead><tr>${pickAll(c.parts.map((p) => p.id), c.k || "ไม่นำไปตัด")}<th></th><th>ชิ้นส่วน</th><th colspan="3">เหตุผล</th><th class="n">จำนวน</th></tr></thead><tbody>
     ${c.parts.map((p) => `<tr class="click ${S.picked.has(p.id) && ed ? "picked" : ""}" data-part="${p.id}">${pick(p.id)}<td>${thumbSVG(p.thumb)}</td><td>${esc(p.name)}</td><td class="why" colspan="3">${esc(c.k ? "ย้ายมากลุ่มนี้เอง" : p.reason || "ผู้ใช้เลือกไม่ตัด")}</td><td class="qty">${p.qty}</td></tr>`).join("")}
     </tbody><tfoot><tr>${ed ? "<td></td>" : ""}<td></td><td>รวม</td><td colspan="3"></td><td class="qty">${c.parts.reduce((n, p) => n + p.qty, 0)}</td></tr></tfoot></table></section>`).join("");
@@ -362,8 +363,38 @@ function renderOverview() {
   box.querySelectorAll("[data-pickall]").forEach((c) => c.addEventListener("change", () => { syncMove(); c.dataset.pickall.split(",").forEach((id) => (c.checked ? S.picked.add(id) : S.picked.delete(id))); renderOverview(); }));
   box.querySelectorAll("[data-group]").forEach((b) => b.addEventListener("click", () => selectGroup(b.dataset.group)));
   box.querySelectorAll("[data-dl]").forEach((b) => b.addEventListener("click", () => download(b.dataset.dl)));
+  bindRename(box);
   const e1 = $("#ovEdit"); if (e1) e1.onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } S.editGroups = true; S.picked.clear(); S.move = null; renderOverview(); };
   if (ed) bindMoveBar();
+}
+/* ---- rename a group: DXF groups (name -> DXF file name) and not-cut groups ---- */
+function renameBox(kind, key, current) {
+  if (!S.renaming || S.renaming.kind !== kind || S.renaming.key !== key) return "";
+  return `<form class="rename-form" data-rkind="${kind}" data-rkey="${esc(key)}">
+    <input type="text" class="rename-in" value="${esc(current)}" maxlength="60" aria-label="ชื่อกลุ่มใหม่" ${kind === "g" ? 'placeholder="ว่าง = ใช้รหัสเหล็กเดิม"' : ""}>
+    <button class="btn primary small" type="submit">บันทึก</button><button class="btn small" type="button" data-rcancel>ยกเลิก</button></form>`;
+}
+function bindRename(box) {
+  box.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (DEMO) { toast(DEMO_MSG); return; }
+    const [kind, ...rest] = b.dataset.rename.split("|");
+    S.renaming = { kind, key: rest.join("|") }; renderOverview();
+    const i = box.querySelector(".rename-in"); if (i) { i.focus(); i.select(); }
+  }));
+  box.querySelectorAll("[data-rcancel]").forEach((b) => (b.onclick = () => { S.renaming = null; renderOverview(); }));
+  box.querySelectorAll(".rename-in").forEach((i) => i.addEventListener("keydown", (e) => { if (e.key === "Escape") { S.renaming = null; renderOverview(); } }));
+  box.querySelectorAll(".rename-form").forEach((f) => f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = f.querySelector(".rename-in").value.trim(), kind = f.dataset.rkind, key = f.dataset.rkey;
+    const body = kind === "g" ? { key, name } : { category: key, name };
+    try {
+      setProject(await sendJSON(`/api/jobs/${S.jobId}/rename`, "POST", body));
+      S.renaming = null; S.price = null;
+      renderTop(); renderRail(); renderInspector(); renderOverview();
+      toast(kind === "g" ? (name ? `เปลี่ยนชื่อกลุ่มเป็น “${name}” แล้ว ไฟล์ DXF ใช้ชื่อนี้` : "ใช้ชื่อตามรหัสเหล็กเหมือนเดิมแล้ว") : `เปลี่ยนชื่อกลุ่มเป็น “${name}” แล้ว`);
+    } catch (err) { toast(err.message, 4000); }
+  }));
 }
 function togglePick(id, on) {
   syncMove();
@@ -455,7 +486,8 @@ function movePreviewHTML(mid, mv) {
       const r = bendRow(t, mid);
       bd = r ? r.bd : null; src = r ? (r.material ? `แถวเฉพาะ ${esc(mid)}` : `ตาราง ${esc(r.gauge || "")} (ทุกชนิด)`) : "ไม่อยู่ในตาราง ใช้ K-factor";
     }
-    const code = mv ? `${esc(mv.id || "?")}${(mv.rows.find((x) => Math.abs(x.thickness - t) < 1e-6) || {}).gauge || "#" + fmtG(t) + "mm"}` : esc(groupCode(mid, t));
+    const existing = !mv && S.project.groups.find((g) => g.material_id === mid && Math.abs(g.thickness - t) < 1e-6);
+    const code = mv ? `${esc(mv.id || "?")}${(mv.rows.find((x) => Math.abs(x.thickness - t) < 1e-6) || {}).gauge || "#" + fmtG(t) + "mm"}` : esc(existing ? existing.name : groupCode(mid, t));
     return `<tr><td>${esc(p.name)}</td><td class="n">${fmt(f.w)} × ${fmt(f.h)}</td><td class="n">${fmtG(t)}</td><td><b>${code}</b></td><td>${bd ? fmt(bd, 2) + " มม." : "–"} <small>${src}</small></td></tr>`;
   }).join("");
   return `<table class="otable mv-prev"><thead><tr><th>ชิ้นส่วน</th><th class="n">ขนาดแผ่นคลี่ (มม.)</th><th class="n">หนา</th><th>กลุ่มใหม่ / ไฟล์ DXF</th><th>ค่ายืด 90° ที่จะใช้</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -1193,7 +1225,7 @@ async function pushPrice(saveDefault) {
 }
 function renderPriceResult() {
   const R = S.price, box = $("#priceResult"); if (!box) return;
-  const g = R.groups.map((x) => `<tr><td><b>${esc(x.code)}</b></td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.extra, 2)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
+  const g = R.groups.map((x) => `<tr><td><b>${esc(x.name || x.code)}</b>${x.name && x.name !== x.code ? `<small>${esc(x.code)}</small>` : ""}</td><td class="n">${x.pieces}</td><td class="n">${fmt(x.weight, 2)}</td><td class="n">${baht(x.metal)}</td><td class="n">${baht(x.paint)}</td><td class="n">${baht(x.extra, 2)}</td><td class="n"><b>${baht(x.total, 2)}</b></td></tr>
     <tr class="sub"><td colspan="7">ใช้แผ่น ${Object.entries(x.sheets).map(([k, v]) => `${k.replace("x", " × ")} ประมาณ ${v} แผ่น`).join(", ") || "-"}</td></tr>`).join("") +
     R.job_extras.map((e) => `<tr><td colspan="6">${esc(e.name)} <small>(ต่องาน)</small></td><td class="n"><b>${baht(e.amount, 2)}</b></td></tr>`).join("");
   const rows = R.rows.map((r) => r.error ? `<tr class="err"><td>${esc(r.name)}</td><td colspan="6">${esc(r.error)}</td></tr>` :

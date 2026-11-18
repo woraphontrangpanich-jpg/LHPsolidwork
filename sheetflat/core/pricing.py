@@ -129,7 +129,7 @@ def price_project(pr, pricing: dict) -> dict:
                 holes = sum(1 for lp in pc.loops if lp["role"] == "hole")
                 r = price_piece(pricing, g.material_id, g.thickness, max(w, h), min(w, h), rec.qty, len(pc.bends), holes)
                 r.update(part_id=rec.id, name=rec.name if len(rec.pieces) == 1 else f"{rec.name}-{k + 1}",
-                         group=g.id, code=g.code)
+                         group=g.id, code=g.code, group_name=g.name)
                 grows.append(r)
         sheets_needed = {}
         for r in grows:
@@ -139,7 +139,7 @@ def price_project(pr, pricing: dict) -> dict:
 
         def tot(k, per_piece=True, rows=grows):
             return round(sum(r[k] * (r["qty"] if per_piece else 1) for r in rows), 4)
-        groups.append({"id": g.id, "code": g.code, "material_id": g.material_id, "thickness": g.thickness,
+        groups.append({"id": g.id, "code": g.code, "name": g.name, "material_id": g.material_id, "thickness": g.thickness,
                        "pieces": sum(r["qty"] for r in grows), "weight": tot("weight", False),
                        "metal": tot("metal"), "paint": tot("paint"), "extra": tot("extra"),
                        "plating": tot("plating", False), "total": tot("total", False),
