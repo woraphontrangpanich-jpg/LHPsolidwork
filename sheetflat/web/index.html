@@ -26,13 +26,19 @@
   </div>
   <div class="top-actions" id="topActions" hidden>
     <button class="btn ghost" id="btnNew">เปิดไฟล์ใหม่</button>
+    <button class="btn ghost" id="btnSave" title="บันทึกงานนี้เป็นไฟล์ .sheetflat เพื่อเปิดต่อหรือส่งให้คนอื่น">บันทึกงาน</button>
     <label class="field-inline">โหมดค่ายืด
       <select id="profileSel"></select>
     </label>
     <button class="btn ghost" id="btnProfile">แก้ตารางค่ายืด</button>
+    <button class="btn" id="btnPrice">คิดราคา</button>
     <button class="btn" id="btnXlsx">ส่งออก Excel</button>
     <button class="btn primary" id="btnAll">ส่งออก DXF ทั้งหมด (.zip)</button>
   </div>
+  <button class="theme-btn" id="btnTheme" type="button" aria-label="เปลี่ยนสีหน้าจอ" title="เปลี่ยนสีหน้าจอ">
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.8a7.2 7.2 0 0 1 0 14.4z" fill="currentColor"/></svg>
+    <span id="themeLabel">อัตโนมัติ</span>
+  </button>
 </header>
 
 <div class="demo-banner" id="demoBanner" hidden>
@@ -57,7 +63,11 @@
         </li>
         <li>
           <h2>โหมดค่ายืด</h2>
-          <select id="landProfile" aria-label="โหมดค่ายืด"></select>
+          <div class="mode-row">
+            <select id="landProfile" aria-label="โหมดค่ายืด"></select>
+            <button class="btn small" type="button" id="landProfileView">ดูตาราง</button>
+            <button class="btn small" type="button" id="landProfileNew">เพิ่มโหมดใหม่</button>
+          </div>
           <p class="hint" id="landProfileHint"></p>
         </li>
         <li>
@@ -65,9 +75,10 @@
           <div class="drop" id="drop" tabindex="0" role="button" aria-label="เลือกหรือวางไฟล์ STEP">
             <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
             <p class="drop-main">ลากไฟล์ .step มาวาง หรือกดเพื่อเลือก</p>
-            <p class="drop-sub">.step และ .stp ใช้ได้ทันที · .sldasm ใช้ได้เฉพาะเครื่องที่ติดตั้ง SolidWorks</p>
-            <input type="file" id="file" accept=".step,.stp,.sldasm,.sldprt" hidden>
+            <p class="drop-sub">.step และ .stp ใช้ได้ทันที · .sldasm ใช้ได้เฉพาะเครื่องที่ติดตั้ง SolidWorks · ไฟล์งานที่บันทึกไว้ (.sheetflat) วางที่นี่ได้เหมือนกัน</p>
+            <input type="file" id="file" accept=".step,.stp,.sldasm,.sldprt,.sheetflat" hidden>
           </div>
+          <button class="btn small load-btn" type="button" id="loadJob">เปิดงานที่บันทึกไว้ (.sheetflat)</button>
           <details class="pathbox">
             <summary>หรือเปิดไฟล์ในเครื่องนี้ด้วยพาธ</summary>
             <div class="path-row">
@@ -197,9 +208,25 @@
     </header>
     <div class="dlg-body" id="profileBody"></div>
     <footer class="dlg-foot">
-      <span class="hint" id="profileMsg"></span>
+      <span class="hint" id="profileMsg">บันทึกไว้ในเครื่องนี้ ใช้ได้กับทุกงานถัดไป</span>
       <button class="btn" value="cancel">ยกเลิก</button>
       <button class="btn primary" id="profileSave" value="ok">บันทึก</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ pricing ============ -->
+<dialog id="priceDlg" class="dlg dlg-wide">
+  <form method="dialog" class="dlg-card" id="priceForm">
+    <header class="dlg-head">
+      <h2>คิดราคา</h2>
+      <button class="x" value="cancel" aria-label="ปิด">×</button>
+    </header>
+    <div class="dlg-body price-body" id="priceBody"></div>
+    <footer class="dlg-foot">
+      <span class="hint" id="priceMsg"></span>
+      <button class="btn" type="button" id="priceDefault">ตั้งเป็นค่าเริ่มต้น</button>
+      <button class="btn primary" type="button" id="priceXlsx">ดาวน์โหลดใบคิดราคา (Excel)</button>
     </footer>
   </form>
 </dialog>

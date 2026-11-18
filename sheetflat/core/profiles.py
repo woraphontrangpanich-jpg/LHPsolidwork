@@ -49,6 +49,64 @@ DEFAULT_PROFILE = {
     "table": DEFAULT_TABLE,
 }
 
+# Price list ("ราคาเหล็ก" sheet of the shop's สูตรคิดราคา workbook).
+#   kg_m2_mm  weight of 1 m2 at 1 mm   (the workbook uses 24 kg per 1220 x 2440 x 1 mm sheet)
+#   price_kg  baht per kg; a row can be limited to a thickness range (e.g. ZN 3 mm and up = ZN#3mm)
+_KG24 = round(24 / (1.22 * 2.44), 6)
+_KG8 = round(8 / (1.22 * 2.44), 6)
+_KG23 = round(23 / (1.22 * 2.44), 6)
+DEFAULT_PRICING = {
+    "sheets": [
+        {"w": 1220, "l": 2440, "on": True},
+        {"w": 1220, "l": 1628, "on": True},
+        {"w": 1220, "l": 1440, "on": False},
+        {"w": 1219, "l": 1550, "on": False},
+    ],
+    "margin": 20.0,              # mm added to every part for clamping and spacing ("เผื่อที่ clamp & วางแบบ")
+    "prices": [
+        {"material": "ZN", "t_min": 0, "t_max": 2.99, "price_kg": 35, "kg_m2_mm": _KG24},
+        {"material": "ZN", "t_min": 3, "t_max": 0, "price_kg": 45, "kg_m2_mm": _KG24},
+        {"material": "ST", "t_min": 0, "t_max": 0, "price_kg": 45, "kg_m2_mm": _KG24},
+        {"material": "AL", "t_min": 0, "t_max": 0, "price_kg": 150, "kg_m2_mm": _KG8},
+        {"material": "SUS", "t_min": 0, "t_max": 0, "price_kg": 120, "kg_m2_mm": _KG23},
+    ],
+    "paint_per_m2": 200.0,       # ค่าสี 0.0002 baht / mm2
+    "no_paint": ["SUS"],         # materials that are not painted
+    "plating_per_kg": 20.0,      # ค่าชุบ
+    "include_plating": False,    # the workbook shows plating but does not add it to the total
+    "bend_price": 5.0,           # ค่าพับ per bend
+    "labor_per_piece": 0.0,      # other labour per piece (ติ๊ก, deburring, ...)
+    "markup_pct": 0.0,
+}
+
+
+def validate_pricing(p) -> dict:
+    base = copy.deepcopy(DEFAULT_PRICING)
+    if isinstance(p, dict):
+        base.update({k: p[k] for k in base if k in p})
+    sheets = []
+    for s in base["sheets"]:
+        w, l = float(s.get("w") or 0), float(s.get("l") or 0)
+        if w > 0 and l > 0:
+            sheets.append({"w": min(w, l), "l": max(w, l), "on": bool(s.get("on", True))})
+    if not sheets:
+        raise ValueError("ต้องมีขนาดแผ่นเหล็กอย่างน้อย 1 ขนาด")
+    base["sheets"] = sheets
+    prices = []
+    for r in base["prices"]:
+        m = str(r.get("material") or "").strip()
+        if not m:
+            continue
+        prices.append({"material": m, "t_min": float(r.get("t_min") or 0), "t_max": float(r.get("t_max") or 0),
+                       "price_kg": float(r.get("price_kg") or 0), "kg_m2_mm": float(r.get("kg_m2_mm") or _KG24)})
+    base["prices"] = prices
+    for k in ("margin", "paint_per_m2", "plating_per_kg", "bend_price", "labor_per_piece", "markup_pct"):
+        base[k] = max(0.0, float(base[k] or 0))
+    base["include_plating"] = bool(base["include_plating"])
+    base["no_paint"] = [str(x).strip() for x in base.get("no_paint") or [] if str(x).strip()]
+    return base
+
+
 # size hints that a part is a purchased item / tube and not a laser-cut blank
 DEFAULT_EXCLUDE_KEYWORDS = [
     "bolt", "screw", "nut", "washer", "rivet", "pin", "pipe", "tube", "bearing", "spring",
@@ -70,6 +128,7 @@ class ProfileStore:
             "profiles": [copy.deepcopy(DEFAULT_PROFILE)],
             "exclude_keywords": list(DEFAULT_EXCLUDE_KEYWORDS),
             "density": 7.85,   # g/cm3
+            "pricing": copy.deepcopy(DEFAULT_PRICING),
         }
 
     def _load(self):
@@ -80,6 +139,7 @@ class ProfileStore:
                 base.update(d)
                 if not any(p["id"] == "factory" for p in base["profiles"]):
                     base["profiles"].insert(0, copy.deepcopy(DEFAULT_PROFILE))
+                base["pricing"] = validate_pricing(base.get("pricing"))
                 return base
             except Exception:
                 pass
@@ -96,6 +156,8 @@ class ProfileStore:
             base.update({k: data[k] for k in base if k in data})
             for p in base["profiles"]:
                 _validate_profile(p)
+            base["materials"] = _validate_materials(base["materials"])
+            base["pricing"] = validate_pricing(base.get("pricing"))
             if not base["profiles"]:
                 base["profiles"] = [copy.deepcopy(DEFAULT_PROFILE)]
             ids = [p["id"] for p in base["profiles"]]
@@ -129,21 +191,48 @@ def _validate_profile(p: dict):
     p["simplify_bends"] = bool(p.get("simplify_bends", True))
     rows = []
     for r in p.get("table", []):
-        rows.append({"gauge": str(r.get("gauge", "")), "thickness": float(r["thickness"]), "bd": float(r["bd"])})
-    rows.sort(key=lambda r: r["thickness"])
+        t, bd = float(r.get("thickness") or 0), float(r.get("bd") or 0)
+        if t <= 0 or bd <= 0:
+            continue                       # empty rows the user added but did not fill
+        rows.append({"gauge": str(r.get("gauge", "")).strip(), "thickness": t, "bd": bd,
+                     "material": str(r.get("material") or "").strip()})
+    rows.sort(key=lambda r: (r["thickness"], r["material"]))
     p["table"] = rows
 
 
-def match_row(profile: dict, thickness: float):
-    """Nearest table row within the profile's match tolerance, else None."""
-    best, bd = None, 1e9
+def _validate_materials(mats) -> list:
+    out, seen = [], set()
+    for m in mats or []:
+        mid = str(m.get("id", "")).strip()
+        if not mid:
+            continue
+        if mid in seen:
+            raise ValueError(f"รหัสชนิดเหล็ก {mid} ซ้ำกัน")
+        seen.add(mid)
+        out.append({"id": mid, "name": str(m.get("name") or mid).strip(), "prefix": str(m.get("prefix") or mid).strip()})
+    if not out:
+        raise ValueError("ต้องมีชนิดเหล็กอย่างน้อย 1 ชนิด")
+    return out
+
+
+def match_row(profile: dict, thickness: float, material_id: str | None = None):
+    """Nearest table row within the profile's match tolerance, else None.
+
+    A row with a material only applies to that steel; at the same thickness it wins over
+    a row for every steel (material empty)."""
+    tol = profile.get("match_tol", 0.06)
+    best, key = None, None
     for r in profile["table"]:
+        rm = r.get("material") or ""
+        if rm and rm != material_id:
+            continue
         d = abs(r["thickness"] - thickness)
-        if d < bd:
-            best, bd = r, d
-    if best is not None and bd <= profile.get("match_tol", 0.06):
-        return best
-    return None
+        if d > tol:
+            continue
+        k = (round(d, 6), 0 if rm else 1)
+        if key is None or k < key:
+            best, key = r, k
+    return best
 
 
 def material_code(material: dict, row: dict | None, thickness: float) -> str:
@@ -153,8 +242,9 @@ def material_code(material: dict, row: dict | None, thickness: float) -> str:
     return f"{material['prefix']}#{thickness:g}mm"
 
 
-def bend_model(profile: dict, thickness: float, k_override: float | None = None) -> BendModel:
-    row = match_row(profile, thickness)
+def bend_model(profile: dict, thickness: float, k_override: float | None = None,
+               material_id: str | None = None) -> BendModel:
+    row = match_row(profile, thickness, material_id)
     t = row["thickness"] if row else thickness
     return BendModel(
         thickness=t,

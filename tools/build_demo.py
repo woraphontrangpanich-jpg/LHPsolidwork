@@ -116,6 +116,9 @@ def main():
             files[f"dxf/{g['id']}/{s['index']}"] = {"path": rel, "name": s["filename"]}
     (DEMO / "export/summary.xlsx").write_bytes(c.get(f"/api/jobs/{jid}/export/xlsx").content)
     files["xlsx"] = {"path": "export/summary.xlsx", "name": f"{P['job']}_สรุป.xlsx"}
+    save("pricing.json", c.get(f"/api/jobs/{jid}/pricing").json())
+    (DEMO / "export/pricing.xlsx").write_bytes(c.get(f"/api/jobs/{jid}/export/pricing").content)
+    files["pricing"] = {"path": "export/pricing.xlsx", "name": f"{P['job']}_ราคา.xlsx"}
     (DEMO / "export/all.zip").write_bytes(c.get(f"/api/jobs/{jid}/export/all").content)
     files["all"] = {"path": "export/all.zip", "name": f"{P['job']}_DXF.zip"}
     save("files.json", files)

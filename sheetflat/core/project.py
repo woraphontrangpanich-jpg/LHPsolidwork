@@ -1,6 +1,7 @@
 """Project = one uploaded assembly: parts, analysis, user decisions, flat patterns, groups."""
 from __future__ import annotations
 
+import copy
 import math
 import re
 import threading
@@ -14,7 +15,7 @@ from .analysis import SheetAnalysis, analyze
 from .bend import BendModel
 from .brep import SolidData, extract_solid
 from .layout import Item, Placed, Sheet, pack, place_geometry, place_loops
-from .profiles import ProfileStore, bend_model, match_row, material_code
+from .profiles import ProfileStore, bend_model, match_row, material_code, validate_pricing
 from .step_reader import PartDef, read_step
 from .unfold import FlatPiece, UnfoldError, prim_points, unfold
 
@@ -54,6 +55,7 @@ class PartRecord:
     material_id: str = "ZN"
     t_override: float | None = None
     flip: bool = False
+    category: str = ""                    # user group for parts that are not cut (e.g. "ซื้อสำเร็จรูป")
     # computed
     pieces: list[FlatPiece] = field(default_factory=list)
     unfold_error: str = ""
@@ -64,7 +66,7 @@ class PartRecord:
 
     def thickness_used(self, profile) -> float:
         t = self.t_override if self.t_override else self.measured_t
-        row = match_row(profile, t)
+        row = match_row(profile, t, self.material_id)
         return row["thickness"] if row else round(t, 2)
 
 
@@ -95,6 +97,9 @@ class Project:
         self.progress = {"state": "queued", "done": 0, "total": 0, "msg": ""}
         self.error = ""
         self.root_name = ""
+        self.source_path = ""                 # STEP file kept for "save job"
+        self.pricing = copy.deepcopy(store.data.get("pricing")) or validate_pricing(None)
+        self.pricing_meta = {"date": "", "customer": "", "note": ""}
 
     # ------------------------------------------------------------------ profile
     @property
@@ -102,7 +107,7 @@ class Project:
         return self.store.get(self.settings.get("profile"))
 
     # ------------------------------------------------------------------ build
-    def load_step(self, path: str):
+    def load_step(self, path: str, state: dict | None = None):
         self.progress.update(state="reading", msg="กำลังอ่านไฟล์ STEP")
         root, defs = read_step(path)
         self.root_name = root
@@ -118,6 +123,8 @@ class Project:
             self.parts.append(self._analyze_part(f"p{n + 1}", nm, qty, solid, kw))
         self.progress.update(state="unfolding", done=0)
         self.recompute()
+        if state:
+            self.apply_state(state)
         self.progress.update(state="done", done=len(entries), msg="เสร็จแล้ว")
 
     def _analyze_part(self, pid, name, qty, solid, kw) -> PartRecord:
@@ -148,10 +155,10 @@ class Project:
             return
         prof = self.profile
         t = rec.thickness_used(prof)
-        model = bend_model(prof, t)
-        key = (prof["id"], t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_ratio, model.jog_use_k,
+        model = bend_model(prof, t, material_id=rec.material_id)
+        key = (prof["id"], rec.material_id, t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_ratio, model.jog_use_k,
                model.simplify_bends,
-               tuple(tuple((r["thickness"], r["bd"]) for r in prof["table"])))
+               tuple(tuple((r["thickness"], r["bd"], r.get("material", "")) for r in prof["table"])))
         if rec.flat_key == key and (rec.pieces or rec.unfold_error):
             return
         rec.flat_key = key
@@ -226,7 +233,7 @@ class Project:
             if not rec.include or rec.status != "sheet" or not rec.pieces:
                 continue
             t = rec.thickness_used(prof)
-            row = match_row(prof, t)
+            row = match_row(prof, t, rec.material_id)
             mat = self.store.material(rec.material_id)
             code = material_code(mat, row, t)
             key = (mat["id"], t)
@@ -297,8 +304,108 @@ class Project:
                 rec.flat_key = None
             if "flip" in patch:
                 rec.flip = bool(patch["flip"])
+            if "category" in patch:
+                rec.category = str(patch["category"] or "").strip()[:60]
+                if rec.category:
+                    rec.include = False
+            if rec.include:
+                rec.category = ""
             self.recompute()
             return rec
+
+    def move_parts(self, ids: list[str], target: dict):
+        """Regroup several parts at once.
+
+        target = {"material_id": "ZN", "thickness": 0.7}  -> cut with that steel / thickness
+                 {"category": "ซื้อสำเร็จรูป"}            -> not cut, listed under that name
+                 {"include": False}                        -> not cut"""
+        with self.lock:
+            byid = {r.id: r for r in self.parts}
+            recs = [byid[i] for i in ids if i in byid]
+            if not recs:
+                raise ValueError("ไม่ได้เลือกชิ้นส่วน")
+            mat_ids = {m["id"] for m in self.store.data["materials"]}
+            for rec in recs:
+                if target.get("category") or target.get("include") is False:
+                    rec.include = False
+                    rec.category = str(target.get("category") or "").strip()[:60]
+                    continue
+                mid = target.get("material_id")
+                if mid not in mat_ids:
+                    raise ValueError(f"ไม่มีชนิดเหล็ก {mid}")
+                if not (rec.analysis and rec.analysis.ok):
+                    raise ValueError(f"{rec.name} ไม่ใช่แผ่นเหล็ก จึงย้ายไปกลุ่มตัดไม่ได้")
+                rec.material_id = mid
+                t = target.get("thickness")
+                if t:
+                    t = float(t)
+                    cur = rec.thickness_used(self.profile)
+                    if abs(cur - t) > 1e-6:
+                        rec.t_override = t
+                        rec.flat_key = None
+                rec.category = ""
+                if not rec.include or rec.status != "sheet":
+                    rec.include = True
+                    if rec.status == "excluded":
+                        rec.status = "sheet"
+                        rec.flat_key = None
+            self.recompute()
+
+    # ------------------------------------------------------------------ pricing
+    def set_pricing(self, pricing: dict | None = None, meta: dict | None = None):
+        with self.lock:
+            if pricing is not None:
+                self.pricing = validate_pricing(pricing)
+            if meta:
+                for k in self.pricing_meta:
+                    if k in meta:
+                        self.pricing_meta[k] = str(meta[k] or "")[:200]
+
+    def price(self) -> dict:
+        from .pricing import price_project
+        with self.lock:
+            out = price_project(self, self.pricing)
+            out["pricing"] = self.pricing
+            out["meta"] = self.pricing_meta
+            return out
+
+    # ------------------------------------------------------------------ save / load ("job file")
+    def state(self) -> dict:
+        """Everything the user decided, to rebuild the same job from the same STEP file."""
+        return {
+            "format": "sheetflat-job", "version": 1,
+            "job": self.job_name, "source": self.source_name,
+            "settings": self.settings, "profile": self.profile,
+            "materials": self.store.data["materials"],
+            "pricing": self.pricing, "pricing_meta": self.pricing_meta,
+            "parts": [{"id": r.id, "name": r.name, "include": r.include, "material_id": r.material_id,
+                       "t_override": r.t_override, "flip": r.flip, "category": r.category} for r in self.parts],
+        }
+
+    def apply_state(self, st: dict):
+        """Apply a saved state after load_step() read the same STEP file."""
+        with self.lock:
+            byid = {r.id: r for r in self.parts}
+            for d in st.get("parts", []):
+                rec = byid.get(d.get("id"))
+                if rec is None or rec.name != d.get("name"):
+                    rec = next((r for r in self.parts if r.name == d.get("name")), None)
+                if rec is None:
+                    continue
+                rec.material_id = d.get("material_id") or rec.material_id
+                rec.t_override = float(d["t_override"]) if d.get("t_override") else None
+                rec.flip = bool(d.get("flip"))
+                rec.category = str(d.get("category") or "")
+                want = bool(d.get("include", rec.include))
+                if want and rec.status == "excluded" and rec.analysis and rec.analysis.ok:
+                    rec.status = "sheet"
+                rec.include = want and rec.status == "sheet"
+                rec.flat_key = None
+            if st.get("pricing"):
+                self.pricing = validate_pricing(st["pricing"])
+            if st.get("pricing_meta"):
+                self.set_pricing(meta=st["pricing_meta"])
+            self.recompute()
 
     def set_material_all(self, material_id: str):
         with self.lock:
@@ -311,7 +418,7 @@ class Project:
     def part_json(self, rec: PartRecord) -> dict:
         prof = self.profile
         t_used = rec.thickness_used(prof) if rec.measured_t else 0.0
-        row = match_row(prof, t_used) if rec.measured_t else None
+        row = match_row(prof, t_used, rec.material_id) if rec.measured_t else None
         mat = self.store.material(rec.material_id)
         flat = None
         if rec.pieces:
@@ -336,7 +443,7 @@ class Project:
             "thumb": self._thumb(rec),
             "id": rec.id, "name": rec.name, "qty": rec.qty, "status": rec.status, "include": rec.include,
             "reason": rec.auto_reason, "reason_code": rec.reason_code,
-            "material_id": rec.material_id,
+            "material_id": rec.material_id, "category": rec.category,
             "thickness": {"measured": rec.measured_t, "used": t_used, "override": rec.t_override,
                           "gauge": row["gauge"] if row else None, "matched": row is not None,
                           "bd": row["bd"] if row else None},
@@ -390,7 +497,7 @@ class Project:
             "id": self.id, "job": self.job_name, "source": self.source_name, "root": self.root_name,
             "settings": self.settings, "profile": prof, "materials": self.store.data["materials"],
             "profiles": [{"id": p["id"], "name": p["name"]} for p in self.store.data["profiles"]],
-            "parts": parts, "groups": groups,
+            "parts": parts, "groups": groups, "can_save": bool(self.source_path),
             "summary": {"unique": len(parts), "pieces": total_pieces, "cut_unique": len(parts) - len(excl),
                         "cut_pieces": cut_pieces, "excluded_unique": len(excl),
                         "excluded_pieces": total_pieces - cut_pieces},

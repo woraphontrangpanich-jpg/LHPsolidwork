@@ -22,8 +22,9 @@
   --rail-w: 320px;
   --insp-w: 340px;
 }
+/* colour mode: follows Windows unless the user picked light or dark (data-theme on <html>) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --zinc-50: #151b21;
     --zinc-100: #1d252c;
     --zinc-200: #2b353d;
@@ -42,8 +43,31 @@
     --bad-bg: #3d1f1d;
     --sel: #4fc3cf;
     --sel-bg: #153138;
+    color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --zinc-50: #151b21;
+  --zinc-100: #1d252c;
+  --zinc-200: #2b353d;
+  --zinc-300: #3b4750;
+  --zinc-500: #8896a1;
+  --steel: #a9b6c0;
+  --ink: #e8edf0;
+  --paper: #1a2128;
+  --bend: #ff7a5f;
+  --dim: #4fc3cf;
+  --warn: #e8b04b;
+  --warn-bg: #3a2f17;
+  --ok: #6fcf97;
+  --ok-bg: #1b3326;
+  --bad: #ff8a80;
+  --bad-bg: #3d1f1d;
+  --sel: #4fc3cf;
+  --sel-bg: #153138;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -347,3 +371,75 @@ body.demo .topnav { display: flex; }
 .dl-more a { color: var(--dim); }
 #dlHashVal { overflow-wrap: anywhere; user-select: all; }
 @media (max-width: 600px) { .navtab { padding: 0 8px; font-size: 13px; } .dlpage { padding: 28px 16px; } .dlpage h1 { font-size: 24px; } }
+
+/* ---------- colour mode button ---------- */
+.theme-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; margin-left: 4px; border: 1px solid var(--zinc-200);
+  border-radius: 15px; background: transparent; color: var(--steel); cursor: pointer; font-size: 12.5px; white-space: nowrap; }
+.theme-btn:hover { color: var(--ink); border-color: var(--zinc-300); }
+.top-actions[hidden] + .theme-btn { margin-left: auto; }
+.topnav ~ .theme-btn { margin-left: 0; }
+
+/* ---------- landing: bend mode row, open saved job ---------- */
+.mode-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mode-row select { flex: 1 1 220px; }
+.load-btn { margin-top: 10px; }
+
+/* ---------- rail: DXF files grouped by steel ---------- */
+.matsec { margin-bottom: 4px; }
+.mat-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 16px 6px; border: 0; background: none; cursor: pointer; text-align: left; }
+.mat-head:hover .mat-name { text-decoration: underline; text-underline-offset: 3px; }
+.mat-name { font-weight: 600; font-size: 13.5px; }
+.mat-sum { margin-left: auto; color: var(--steel); font-size: 12px; }
+.chev { width: 8px; height: 8px; border: solid var(--steel); border-width: 0 1.6px 1.6px 0; transform: rotate(45deg) translate(-2px, -2px); transition: transform .15s; flex: none; }
+[aria-expanded="false"] > .chev { transform: rotate(-45deg); }
+.plate-top { display: flex; align-items: stretch; }
+.plate-top .plate-head { flex: 1; min-width: 0; }
+.fold { width: 34px; border: 0; border-left: 1px solid var(--zinc-100); background: none; cursor: pointer; display: grid; place-items: center; color: var(--steel); }
+.fold:hover { background: var(--zinc-50); }
+@media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+
+/* ---------- overview: edit groups ---------- */
+.edit-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+.edit-row .hint { margin: 0; }
+.movebar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin-top: 18px; padding: 12px 14px;
+  background: var(--sel-bg); border: 1px solid var(--sel); border-radius: var(--radius); }
+.mv-n { align-self: center; min-width: 9em; }
+.mv-to { display: grid; gap: 3px; font-size: 12px; color: var(--steel); }
+.mv-to select { min-width: 260px; max-width: 360px; }
+.mv-to input { width: 200px; }
+.otable .pick { width: 30px; padding-right: 0; }
+.otable .pick input { width: 16px; height: 16px; cursor: pointer; }
+.otable tr.picked td { background: var(--sel-bg); }
+
+/* ---------- dialogs (bend modes, pricing) ---------- */
+.dlg-h3 { font-size: 14px; font-weight: 600; margin: 18px 0 4px; }
+.dlg-body .dlg-h3:first-child { margin-top: 0; }
+.dlg-more { margin-top: 16px; }
+.dlg-more .grid2 { margin-top: 10px; }
+table.pt select { width: 100%; }
+.dlg-wide { width: min(1240px, 96vw); }
+.price-body { padding: 0; }
+.price-grid { display: grid; grid-template-columns: minmax(0, 470px) minmax(0, 1fr); min-height: 0; }
+.price-form { padding: 16px 18px; border-right: 1px solid var(--zinc-200); }
+.price-result { padding: 16px 18px; background: var(--zinc-50); }
+.price-pt input { width: 100%; min-width: 0; }
+.sheet-list { display: grid; gap: 6px; }
+.sheet-chip { display: flex; align-items: center; gap: 6px; }
+.sheet-chip input[type=number] { width: 80px; }
+.price-total { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px; padding: 14px 16px; margin-bottom: 14px;
+  background: var(--paper); border: 1px solid var(--zinc-200); border-radius: var(--radius); }
+.price-total span { color: var(--steel); }
+.price-total b { font-size: 26px; font-weight: 600; grid-row: 1 / 3; grid-column: 2; align-self: center; }
+.price-total small { color: var(--steel); font-size: 12px; }
+.ptab { background: var(--paper); }
+.ptab td small { display: block; color: var(--steel); font-size: 11.5px; }
+.ptab tr.sub td { border-top: 0; padding-top: 0; color: var(--steel); font-size: 12px; }
+.ptab tr.err td { background: var(--bad-bg); color: var(--bad); }
+@media (max-width: 900px) {
+  .price-grid { grid-template-columns: 1fr; }
+  .price-form { border-right: 0; border-bottom: 1px solid var(--zinc-200); }
+}
+
+table.pt .mat-sel { min-width: 112px; }
+.top-job { flex: 0 1 auto; }
+.job-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }

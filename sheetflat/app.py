@@ -22,6 +22,7 @@ from .core.project import Project
 from .core.step_reader import StepReadError
 from .core.sw_convert import SolidWorksUnavailable, convert_to_step, solidworks_available
 from .core.xlsx_export import build_xlsx
+from .core.pricing_xlsx import build_pricing_xlsx
 
 import os
 import time
@@ -103,15 +104,17 @@ def get_job(jid: str) -> Project:
 
 
 # ------------------------------------------------------------------ upload / open
-def _run(pr: Project, path: Path, tmpdir: Path | None):
+def _run(pr: Project, path: Path, tmpdir: Path | None, state: dict | None = None):
     try:
         suffix = path.suffix.lower()
         if suffix in (".sldasm", ".sldprt"):
             pr.progress.update(state="converting", msg="กำลังให้ SolidWorks แปลงเป็น STEP")
             step = convert_to_step(path, path.with_suffix(".step"))
-            pr.load_step(str(step))
+            pr.source_path = "" if CLOUD else str(step)
+            pr.load_step(str(step), state)
         else:
-            pr.load_step(str(path))
+            pr.source_path = "" if CLOUD else str(path)
+            pr.load_step(str(path), state)
         if CLOUD and tmpdir is not None:
             shutil.rmtree(tmpdir, ignore_errors=True)       # do not keep customer files on the server
     except (StepReadError, SolidWorksUnavailable) as ex:
@@ -126,29 +129,30 @@ def _run(pr: Project, path: Path, tmpdir: Path | None):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _start(path: Path, source_name: str, material: str, profile: str | None, tmpdir: Path | None = None) -> Project:
-    pr = Project(store, Path(source_name).stem, source_name,
-                 {"material": material, "profile": profile or store.data["active"]})
+def _start(path: Path, source_name: str, material: str, profile: str | None, tmpdir: Path | None = None,
+           state: dict | None = None, job_name: str | None = None) -> Project:
+    settings = {"material": material, "profile": profile or store.data["active"]}
+    if state:
+        settings.update({k: v for k, v in (state.get("settings") or {}).items() if k != "profile"})
+    pr = Project(store, job_name or Path(source_name).stem, source_name, settings)
+    pr.upload_dir = tmpdir
     _expire_jobs()
     jobs[pr.id] = pr
     while len(jobs) > MAX_JOBS:
-        old_id, _ = jobs.popitem(last=False)
-        shutil.rmtree(DATA / "uploads" / old_id, ignore_errors=True)
-    threading.Thread(target=_run, args=(pr, path, tmpdir), daemon=True).start()
+        _, old = jobs.popitem(last=False)
+        if getattr(old, "upload_dir", None):
+            shutil.rmtree(old.upload_dir, ignore_errors=True)
+    threading.Thread(target=_run, args=(pr, path, tmpdir, state), daemon=True).start()
     return pr
 
 
-@app.post("/api/upload")
-async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profile: str = Form("")):
+async def _receive(file: UploadFile, exts: tuple) -> tuple[Path, Path, str]:
+    """Store an upload in its own folder (size-limited)."""
+    import uuid
     name = Path(file.filename or "model.step").name
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in ("step", "stp", "sldasm", "sldprt"):
-        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt")
-    if ext in ("sldasm", "sldprt") and not solidworks_available():
-        raise HTTPException(
-            400, "ไฟล์ SolidWorks (.sldasm) อ่านได้เฉพาะเครื่องที่ติดตั้ง SolidWorks - "
-                 "กรุณา Save As เป็น .step แล้วอัปโหลดไฟล์ STEP (รอยพับ/ความหนาอ่านจากไฟล์ STEP ได้ครบ)")
-    import uuid
+    if ext not in exts:
+        raise HTTPException(400, "รองรับเฉพาะไฟล์ " + " / ".join("." + e for e in exts))
     tmp = DATA / "uploads" / ("u" + uuid.uuid4().hex[:10])
     tmp.mkdir(parents=True, exist_ok=True)
     path = tmp / name
@@ -161,7 +165,106 @@ async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profi
                 shutil.rmtree(tmp, ignore_errors=True)
                 raise HTTPException(413, f"ไฟล์ใหญ่เกิน {MAX_UPLOAD_MB} MB")
             fh.write(chunk)
+    return tmp, path, name
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profile: str = Form("")):
+    name = Path(file.filename or "model.step").name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in ("step", "stp", "sldasm", "sldprt"):
+        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt")
+    if ext in ("sldasm", "sldprt") and not solidworks_available():
+        raise HTTPException(
+            400, "ไฟล์ SolidWorks (.sldasm) อ่านได้เฉพาะเครื่องที่ติดตั้ง SolidWorks - "
+                 "กรุณา Save As เป็น .step แล้วอัปโหลดไฟล์ STEP (รอยพับ/ความหนาอ่านจากไฟล์ STEP ได้ครบ)")
+    tmp, path, name = await _receive(file, ("step", "stp", "sldasm", "sldprt"))
     pr = _start(path, name, material, profile, tmpdir=tmp)
+    return {"id": pr.id}
+
+
+# ------------------------------------------------------------------ job file (save / load)
+JOB_EXT = "sheetflat"
+
+
+@app.get("/api/jobs/{jid}/save")
+def save_job(jid: str):
+    """One file with the STEP model and every decision, to reopen later or send to someone else."""
+    pr = get_job(jid)
+    with pr.lock:
+        if not pr.source_path or not Path(pr.source_path).is_file():
+            raise HTTPException(400, "บันทึกงานไม่ได้ เพราะไม่มีไฟล์ STEP ต้นฉบับในเครื่องแล้ว กรุณาเปิดไฟล์ใหม่")
+        st = pr.state()
+        st["step_name"] = Path(pr.source_path).name
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("job.json", json.dumps(st, ensure_ascii=False, indent=1, default=_enc))
+            z.write(pr.source_path, "model/" + st["step_name"])
+    return _attach(buf.getvalue(), f"{pr.job_name}.{JOB_EXT}", "application/zip")
+
+
+def _adopt_profile(prof: dict | None, materials: list | None) -> str | None:
+    """Make the sender's bend profile and steels available here; returns the profile id to use."""
+    if not prof:
+        return None
+    data = json.loads(json.dumps(store.data))
+    changed = False
+    have = {m["id"] for m in data["materials"]}
+    for m in materials or []:
+        if m.get("id") and m["id"] not in have:
+            data["materials"].append({"id": m["id"], "name": m.get("name") or m["id"], "prefix": m.get("prefix") or m["id"]})
+            changed = True
+
+    def clean(p):
+        return {k: v for k, v in p.items() if k not in ("id", "name")}
+
+    same = next((p for p in data["profiles"] if p["id"] == prof.get("id")), None)
+    if same is not None and clean(same) == clean(prof):
+        pid = same["id"]
+    else:
+        twin = next((p for p in data["profiles"] if clean(p) == clean(prof)), None)
+        if twin is not None:
+            pid = twin["id"]
+        else:
+            import uuid
+            new = dict(prof)
+            pid = new["id"] = "f" + uuid.uuid4().hex[:8]
+            new["name"] = f"{prof.get('name', 'โหมด')} (จากไฟล์งาน)"
+            data["profiles"].append(new)
+            changed = True
+    if changed:
+        active = data["active"]
+        store.replace(data)
+        store.data["active"] = active
+        store.save()
+    return pid
+
+
+@app.post("/api/load")
+async def load_job(file: UploadFile = File(...)):
+    tmp, path, _ = await _receive(file, (JOB_EXT,))
+    try:
+        with zipfile.ZipFile(path) as z:
+            st = json.loads(z.read("job.json").decode("utf-8"))
+            if st.get("format") != "sheetflat-job":
+                raise ValueError("ไม่ใช่ไฟล์งาน SheetFlat")
+            step_name = Path(st.get("step_name") or "model.step").name
+            if Path(step_name).suffix.lower() not in (".step", ".stp"):
+                raise ValueError("ไฟล์งานไม่มีโมเดล STEP")
+            step = tmp / step_name
+            with z.open("model/" + step_name) as src, open(step, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    except (KeyError, ValueError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as ex:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(400, f"เปิดไฟล์งานไม่ได้: {ex}")
+    path.unlink(missing_ok=True)
+    try:
+        pid = _adopt_profile(st.get("profile"), st.get("materials"))
+    except (ValueError, KeyError) as ex:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(400, f"โหมดค่ายืดในไฟล์งานไม่ถูกต้อง: {ex}")
+    pr = _start(step, st.get("source") or step_name, (st.get("settings") or {}).get("material", "ZN"),
+                pid, tmpdir=tmp, state=st, job_name=st.get("job"))
     return {"id": pr.id}
 
 
@@ -198,6 +301,37 @@ def edit_part(jid: str, pid: str, body: dict):
     except StopIteration:
         raise HTTPException(404, "ไม่พบชิ้นส่วน")
     return pr.to_json()
+
+
+@app.post("/api/jobs/{jid}/move")
+def move_parts(jid: str, body: dict):
+    """Regroup parts: body = {"ids": [...], "target": {"material_id", "thickness"} | {"category"} | {"include": false}}"""
+    pr = get_job(jid)
+    try:
+        pr.move_parts(list(body.get("ids") or []), dict(body.get("target") or {}))
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    return pr.to_json()
+
+
+@app.get("/api/jobs/{jid}/pricing")
+def get_pricing(jid: str):
+    return get_job(jid).price()
+
+
+@app.put("/api/jobs/{jid}/pricing")
+def put_pricing(jid: str, body: dict):
+    """body = {"pricing": {...}, "meta": {"date", "customer", "note"}, "save_default": bool}"""
+    pr = get_job(jid)
+    try:
+        pr.set_pricing(body.get("pricing"), body.get("meta"))
+    except (ValueError, TypeError) as ex:
+        raise HTTPException(400, f"ข้อมูลราคาไม่ถูกต้อง: {ex}")
+    if body.get("save_default"):
+        data = json.loads(json.dumps(store.data))
+        data["pricing"] = pr.pricing
+        store.replace(data)
+    return pr.price()
 
 
 @app.patch("/api/jobs/{jid}/settings")
@@ -280,6 +414,14 @@ def export_xlsx(jid: str):
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.get("/api/jobs/{jid}/export/pricing")
+def export_pricing(jid: str):
+    pr = get_job(jid)
+    with pr.lock:
+        return _attach(build_pricing_xlsx(pr), f"{pr.job_name}_ราคา.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.get("/api/jobs/{jid}/export/all")
 def export_all(jid: str):
     pr = get_job(jid)
@@ -289,6 +431,7 @@ def export_all(jid: str):
             for s in g.sheets:
                 z.writestr(pr.sheet_filename(g, s.index) + ".dxf", _dxf_for(pr, g, s.index))
         z.writestr(f"{pr.job_name}_สรุป.xlsx", build_xlsx(pr))
+        z.writestr(f"{pr.job_name}_ราคา.xlsx", build_pricing_xlsx(pr))
     return _attach(buf.getvalue(), f"{pr.job_name}_DXF.zip", "application/zip")
 
 

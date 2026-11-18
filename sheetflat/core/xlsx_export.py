@@ -115,19 +115,18 @@ def build_xlsx(project) -> bytes:
 
     # ------------------------------------------------------------ 3. excluded
     ws3 = wb.create_sheet("ไม่นำไปตัด")
-    _header(ws3, 1, ["ลำดับ", "ชื่อชิ้นส่วน", "จำนวน", "เหตุผลที่ไม่ตัด", "ขนาด 3D (มม.)"], [7, 30, 9, 90, 24])
+    _header(ws3, 1, ["ลำดับ", "ชื่อชิ้นส่วน", "จำนวน", "กลุ่ม", "เหตุผลที่ไม่ตัด", "ขนาด 3D (มม.)"], [7, 30, 9, 22, 80, 24])
     r = 2
     n = 0
-    for p in js["parts"]:
-        if p["include"]:
-            continue
+    for p in sorted((p for p in js["parts"] if not p["include"]), key=lambda p: (p.get("category") or "~")):
         n += 1
         why = p["reason"] or "ผู้ใช้เลือกไม่ตัด"
-        _row(ws3, r, [n, p["name"], p["qty"], why, " x ".join(f"{x:.0f}" for x in p["bbox3"])], fill=EXCL_FILL)
+        _row(ws3, r, [n, p["name"], p["qty"], p.get("category") or "", why, " x ".join(f"{x:.0f}" for x in p["bbox3"])],
+             fill=EXCL_FILL)
         r += 1
     if r > 2:
-        _row(ws3, r, ["", "รวม", f"=SUM(C2:C{r - 1})", "", ""])
-        for c in range(1, 6):
+        _row(ws3, r, ["", "รวม", f"=SUM(C2:C{r - 1})", "", "", ""])
+        for c in range(1, 7):
             ws3.cell(row=r, column=c).font = Font(bold=True, name="Tahoma", size=10)
 
     # ------------------------------------------------------------ 4. bends
@@ -148,9 +147,9 @@ def build_xlsx(project) -> bytes:
 
     # ------------------------------------------------------------ 5. table used
     ws5 = wb.create_sheet("ตารางค่ายืดที่ใช้")
-    _header(ws5, 1, ["เบอร์", "ความหนา (มม.)", "ค่ายืด 90° (มม.)"], [14, 16, 18])
+    _header(ws5, 1, ["เบอร์", "ความหนา (มม.)", "ค่ายืด 90° (มม.)", "ใช้กับเหล็ก"], [14, 16, 18, 16])
     for i, row in enumerate(prof["table"], 2):
-        _row(ws5, i, [row["gauge"], row["thickness"], row["bd"]])
+        _row(ws5, i, [row["gauge"], row["thickness"], row["bd"], row.get("material") or "ทุกชนิด"])
     ws5.cell(row=len(prof["table"]) + 3, column=1, value=f"K-factor = {prof['k_factor']}  (ใช้กับรอยพับที่ไม่ใช่ 90° หรือรัศมีใหญ่/โค้ง)").font = BASE_FONT
 
     buf = io.BytesIO()
