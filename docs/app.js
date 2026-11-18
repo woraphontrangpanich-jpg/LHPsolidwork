@@ -277,6 +277,13 @@ async function releaseInfo() {
     const a = (rel.assets || []).find((x) => x.name === "SheetFlat-windows.zip");
     if (!a) return;
     $("#dlMeta").textContent = `SheetFlat-windows.zip · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
+    const when = new Date(rel.published_at || a.updated_at || a.created_at);
+    if (!Number.isNaN(when.getTime())) {
+      const th = when.toLocaleString("th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
+      $("#dlDate").textContent = `อัปเดตล่าสุด ${th} น. (เวลาประเทศไทย)`;
+      $("#dlDate").dateTime = when.toISOString();
+      $("#dlDate").hidden = false;
+    }
     if (a.digest && a.digest.startsWith("sha256:")) {
       $("#dlHashVal").textContent = a.digest.slice(7).toUpperCase();
       $("#dlHash").hidden = false;
