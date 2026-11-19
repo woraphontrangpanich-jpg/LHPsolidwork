@@ -1,4 +1,5 @@
 """The local server must only answer its own page (no sample files needed, runs in CI)."""
+from pathlib import Path
 from fastapi.testclient import TestClient
 
 from sheetflat.app import app
@@ -30,3 +31,27 @@ def test_cloud_mode_skips_the_host_check(monkeypatch):
     import sheetflat.app as A
     monkeypatch.setattr(A, "CLOUD", True)
     assert client.get("/healthz", headers={"host": "sheetflat.example.com"}).status_code == 200
+
+
+def test_solidworks_conversion_never_writes_next_to_the_customer_file(tmp_path, monkeypatch):
+    """Opening E:\job\A.SLDASM by path must not create or overwrite E:\job\A.step."""
+    import time
+    import sheetflat.app as A
+    src = tmp_path / "job" / "A.SLDASM"
+    src.parent.mkdir()
+    src.write_bytes(b"not really solidworks")
+    keep = src.parent / "A.step"
+    keep.write_text("customer's own STEP", encoding="utf-8")
+    seen = {}
+
+    def fake_convert(s, d):
+        seen["dst"] = str(d)
+        raise A.SolidWorksUnavailable("test")
+    monkeypatch.setattr(A, "convert_to_step", fake_convert)
+    pr = A._start(src, src.name, "ZN", None)
+    for _ in range(50):
+        if pr.progress["state"] == "error":
+            break
+        time.sleep(0.05)
+    assert seen and src.parent.resolve() not in Path(seen["dst"]).resolve().parents
+    assert keep.read_text(encoding="utf-8") == "customer's own STEP"

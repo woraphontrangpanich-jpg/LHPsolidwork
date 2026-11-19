@@ -114,7 +114,14 @@ def _run(pr: Project, path: Path, tmpdir: Path | None, state: dict | None = None
         suffix = path.suffix.lower()
         if suffix in (".sldasm", ".sldprt"):
             pr.progress.update(state="converting", msg="กำลังให้ SolidWorks แปลงเป็น STEP")
-            step = convert_to_step(path, path.with_suffix(".step"))
+            # convert into the program's own folder, never next to the customer's file (a STEP of the same
+            # name there would be overwritten)
+            import uuid
+            out_dir = Path(tmpdir) if tmpdir else DATA / "uploads" / ("c" + uuid.uuid4().hex[:10])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            if not tmpdir:
+                pr.upload_dir = out_dir                      # removed with the job like an upload
+            step = convert_to_step(path, out_dir / (path.stem + "_converted.step"))
             pr.source_path = "" if CLOUD else str(step)
             pr.load_step(str(step), state)
         else:

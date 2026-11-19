@@ -242,3 +242,30 @@ def test_3d_mesh_of_a_part(client, job):
     # the page and its scripts are never served stale after an update
     assert client.get("/", headers={"host": "127.0.0.1"}).headers["cache-control"] == "no-cache"
     assert client.get("/static/vendor/three.module.min.js").status_code == 200
+
+
+def test_text_from_files_never_becomes_a_formula_in_excel(client, job):
+    """A name like =HYPERLINK(...) from a customer's file must stay text in every Excel we write."""
+    jid, P = job
+    bad = '=HYPERLINK("http://evil.example","click")'
+    hook = next(p for p in P["parts"] if p["name"] == "Hook")
+    client.post(f"/api/jobs/{jid}/move", json={"ids": [hook["id"]], "target": {"category": bad}})
+    g = next(x for x in P["groups"] if x["code"] == "ZN#22")
+    client.post(f"/api/jobs/{jid}/rename", json={"key": g["key"], "name": "=1+1"})
+    pr = client.get(f"/api/jobs/{jid}/pricing").json()["pricing"]
+    pr["extras"] = [{"name": "=2+2", "rate": 1, "unit": "piece", "on": True}]
+    client.put(f"/api/jobs/{jid}/pricing", json={"pricing": pr, "meta": {"customer": "=cmd|' /C calc'!A0", "note": "+1"}})
+    for url in ("export/xlsx", "export/pricing"):
+        wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/jobs/{jid}/{url}").content))
+        found = 0
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for c in row:
+                    v = str(c.value or "")
+                    if any(x in v for x in ("evil.example", "calc", "=1+1", "=2+2")):
+                        assert c.data_type == "s", (url, ws.title, c.coordinate, v)
+                        found += 1
+        assert found, url
+    # the program's own formulas are still formulas
+    d = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/jobs/{jid}/export/pricing").content))["รายละเอียด"]
+    assert d["H6"].data_type == "f"

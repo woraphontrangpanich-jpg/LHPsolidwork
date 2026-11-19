@@ -8,6 +8,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from .xlsx_safe import put, text
+
 HEAD_FILL = PatternFill("solid", fgColor="1F2A37")
 HEAD_FONT = Font(bold=True, color="FFFFFF", name="Tahoma")
 BASE_FONT = Font(name="Tahoma", size=10)
@@ -31,7 +33,7 @@ def _header(ws, row, headers, widths=None):
 
 def _row(ws, row, values, fill=None, numfmt=None):
     for i, v in enumerate(values, 1):
-        c = ws.cell(row=row, column=i, value=v)
+        c = put(ws.cell(row=row, column=i), v)
         c.font = BASE_FONT
         c.border = BORDER
         c.alignment = Alignment(vertical="center", wrap_text=isinstance(v, str) and len(v) > 28)
@@ -53,10 +55,10 @@ def build_xlsx(project) -> bytes:
     ws["A1"] = "สรุปงานคลี่แผ่น"
     ws["A1"].font = Font(bold=True, size=16, name="Tahoma")
     info = [
-        ("ชื่องาน", js["job"]),
-        ("ไฟล์ต้นฉบับ", js["source"]),
+        ("ชื่องาน", text(js["job"])),
+        ("ไฟล์ต้นฉบับ", text(js["source"])),
         ("วันที่", datetime.datetime.now().strftime("%Y-%m-%d %H:%M")),
-        ("โหมดค่ายืด", prof["name"]),
+        ("โหมดค่ายืด", text(prof["name"])),
         ("K-factor (รอยพับไม่ฉาก/โค้ง)", prof["k_factor"]),
         ("จำนวนชิ้นส่วนทั้งหมดใน Assembly", js["summary"]["pieces"]),
         ("   - ชิ้นที่นำไปตัด", js["summary"]["cut_pieces"]),
@@ -66,7 +68,7 @@ def build_xlsx(project) -> bytes:
     ]
     for i, (k, v) in enumerate(info, 3):
         ws.cell(row=i, column=1, value=k).font = Font(bold=True, name="Tahoma", size=10)
-        ws.cell(row=i, column=2, value=v).font = BASE_FONT
+        put(ws.cell(row=i, column=2), v).font = BASE_FONT
     r0 = 3 + len(info) + 2
     _header(ws, r0, ["ไฟล์ DXF", "วัสดุ", "ความหนา (มม.)", "จำนวนแบบ", "จำนวนชิ้น", "พื้นที่คลี่รวม (ตร.ม.)",
                      "น้ำหนักรวม (กก.)", "ขนาดไฟล์ (มม.)"],
@@ -75,7 +77,7 @@ def build_xlsx(project) -> bytes:
     first = r
     for g in js["groups"]:
         for s in g["sheets"]:
-            _row(ws, r, [s["filename"], g["code"], g["thickness"], len(g["part_ids"]), s["count"],
+            _row(ws, r, [text(s["filename"]), text(g["code"]), g["thickness"], len(g["part_ids"]), s["count"],
                          round(g["area"] / 1e6, 4) if len(g["sheets"]) == 1 else None,
                          g["weight_kg"] if len(g["sheets"]) == 1 else None, f"{s['w']:.0f} x {s['h']:.0f}"],
                  numfmt={6: "0.0000", 7: "0.00"})
@@ -94,7 +96,7 @@ def build_xlsx(project) -> bytes:
     fname = {}
     for g in js["groups"]:
         for pid in g["part_ids"]:
-            fname[pid] = g["filename"] if len(g["sheets"]) == 1 else g["filename"] + " (หลายแผ่น)"
+            fname[pid] = text(g["filename"] if len(g["sheets"]) == 1 else g["filename"] + " (หลายแผ่น)")
     r = 2
     n = 0
     for p in js["parts"]:
@@ -102,9 +104,9 @@ def build_xlsx(project) -> bytes:
             continue
         n += 1
         f = p["flat"]
-        _row(ws2, r, [n, p["name"], p["qty"], p["code"], p["thickness"]["used"], f["w"], f["h"], f["area"], f["cut_len"],
+        _row(ws2, r, [n, text(p["name"]), p["qty"], text(p["code"]), p["thickness"]["used"], f["w"], f["h"], f["area"], f["cut_len"],
                       f["holes"], len(f["bends"]), f["weight_kg"], f"=C{r}*L{r}", fname.get(p["id"], ""),
-                      "; ".join(p["warnings"])],
+                      text("; ".join(p["warnings"]))],
              fill=WARN_FILL if p["warnings"] else None, numfmt={12: "0.000", 13: "0.000"})
         r += 1
     if r > 2:
@@ -121,7 +123,7 @@ def build_xlsx(project) -> bytes:
     for p in sorted((p for p in js["parts"] if not p["include"]), key=lambda p: (p.get("category") or "~")):
         n += 1
         why = p["reason"] or "ผู้ใช้เลือกไม่ตัด"
-        _row(ws3, r, [n, p["name"], p["qty"], p.get("category") or "", why, " x ".join(f"{x:.0f}" for x in p["bbox3"])],
+        _row(ws3, r, [n, text(p["name"]), p["qty"], text(p.get("category") or ""), text(why), " x ".join(f"{x:.0f}" for x in p["bbox3"])],
              fill=EXCL_FILL)
         r += 1
     if r > 2:
@@ -139,7 +141,7 @@ def build_xlsx(project) -> bytes:
         if not p["include"] or not p["flat"]:
             continue
         for i, b in enumerate(p["flat"]["bends"], 1):
-            _row(ws4, r, [p["name"], i, b["angle_in"], "พับขึ้น" if b["dir"] == "up" else "พับลง", b["r"],
+            _row(ws4, r, [text(p["name"]), i, b["angle_in"], "พับขึ้น" if b["dir"] == "up" else "พับลง", b["r"],
                           "ตารางค่ายืด (90°)" if b["method"] == "table" else "K-factor",
                           b["bd"] if b["bd"] is not None else "", b["k"] if b["k"] is not None else "", b["ba"], b["len"]])
             r += 1
@@ -149,7 +151,7 @@ def build_xlsx(project) -> bytes:
     ws5 = wb.create_sheet("ตารางค่ายืดที่ใช้")
     _header(ws5, 1, ["เบอร์", "ความหนา (มม.)", "ค่ายืด 90° (มม.)", "ใช้กับเหล็ก"], [14, 16, 18, 16])
     for i, row in enumerate(prof["table"], 2):
-        _row(ws5, i, [row["gauge"], row["thickness"], row["bd"], row.get("material") or "ทุกชนิด"])
+        _row(ws5, i, [text(row["gauge"]), row["thickness"], row["bd"], text(row.get("material") or "ทุกชนิด")])
     ws5.cell(row=len(prof["table"]) + 3, column=1, value=f"K-factor = {prof['k_factor']}  (ใช้กับรอยพับที่ไม่ใช่ 90° หรือรัศมีใหญ่/โค้ง)").font = BASE_FONT
 
     buf = io.BytesIO()

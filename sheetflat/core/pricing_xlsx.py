@@ -23,6 +23,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter as COL
 
 from .profiles import EXTRA_UNITS
+from .xlsx_safe import put, text
 
 # ---- the workbook's look (theme colours of the original, as RGB) ----
 ANG = "Angsana New"
@@ -59,7 +60,7 @@ NOTE = "ค่าแรงและอื่นๆ"
 
 def _put(ws, ref, v, font=F_NUM, fill=None, fmt=None, align=VCENTER, border=BOX):
     c = ws[ref] if isinstance(ref, str) else ws.cell(row=ref[0], column=ref[1])
-    c.value = v
+    put(c, v)
     c.font = font
     if border:
         c.border = border
@@ -111,7 +112,7 @@ def build_pricing_xlsx(project) -> bytes:
     xr = {}
     r = 5
     for k, e in enumerate(P["extras"]):
-        _put(N, (r, 1), e["name"], font=F_CELL)
+        _put(N, (r, 1), text(e["name"]), font=F_CELL)
         _put(N, (r, 2), e["rate"], fill=YELLOW, fmt=ACC2)
         _put(N, (r, 3), EXTRA_UNITS[e["unit"]], font=F_CELL, align=CENTER)
         _put(N, (r, 4), 1 if e["on"] else 0, fill=YELLOW, align=CENTER)
@@ -159,7 +160,7 @@ def build_pricing_xlsx(project) -> bytes:
         code = _code(mats, p)
         row_of[(p["material"], round(p["thickness"], 3))] = pr_
         R.row_dimensions[pr_].height = 25.8
-        _put(R, (pr_, 1), code, font=rowfont, align=Alignment(horizontal="center", vertical="center"))
+        _put(R, (pr_, 1), text(code), font=rowfont, align=Alignment(horizontal="center", vertical="center"))
         _put(R, (pr_, 2), p["thickness"], font=rowfont, align=Alignment(horizontal="center", vertical="center"))
         _put(R, (pr_, 3), p["price_kg"], font=rowfont, fill=YELLOW, fmt=ACC2)
         _put(R, (pr_, 4), p["kg_plate"], font=rowfont, fill=YELLOW, fmt="0.00")
@@ -193,7 +194,7 @@ def build_pricing_xlsx(project) -> bytes:
         D.column_dimensions[COL(ex0 + i)].width = 12
     D.column_dimensions[COL(note_col)].width = 40
     _put(D, "A1", f"ใบคิดราคา {project.job_name}", font=Font(name=ANG, size=18, bold=True), border=None)
-    _put(D, "A2", f"{meta.get('customer') or ''}  วันที่ {date}".strip(), font=F_CELL, border=None)
+    _put(D, "A2", text(f"{meta.get('customer') or ''}  วันที่ {date}".strip()), font=F_CELL, border=None)
     D.merge_cells("R1:T1")
     D.merge_cells("R2:T2")
     _put(D, "R1", "เผื่อที่ clamp & วางแบบ", font=F_NUMB, fill=GREY, align=CENTER, border=HBOX)
@@ -224,7 +225,7 @@ def build_pricing_xlsx(project) -> bytes:
     _head(D, f"{PL}4", "ชุบ\n(1/0)", fill=YELLOW, merge=f"{PL}4:{PL}5")
     for i, (k, e) in enumerate(extras):
         L = COL(ex0 + i)
-        _head(D, f"{L}4", f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})", fill=GREY, merge=f"{L}4:{L}5")
+        _head(D, f"{L}4", text(f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})"), fill=GREY, merge=f"{L}4:{L}5")
     _head(D, f"{COL(ex_total)}4", "ค่าใช้จ่ายอื่น\n/ชิ้น", fill=GREY, merge=f"{COL(ex_total)}4:{COL(ex_total)}5")
     _head(D, f"{COL(use_col)}4", "การใช้แผ่นเหล็ก", fill=GREY, merge=f"{COL(use_col)}4:{COL(use_col + 2)}4")
     _head(D, f"{COL(use_col)}5", "ใช้ (%)", fill=GREY)
@@ -246,12 +247,12 @@ def build_pricing_xlsx(project) -> bytes:
         sh = row["sheet"]
         D.row_dimensions[r].height = 19.95
         _put(D, (r, 1), n, font=F_CELL, align=CENTER)
-        _put(D, (r, 2), row["code"], font=F_CELL, align=CENTER)
+        _put(D, (r, 2), text(row["code"]), font=F_CELL, align=CENTER)
         _put(D, (r, 3), row["t"], font=F_CELL, align=CENTER)
         _put(D, (r, 4), row["x"], font=F_CELL, fmt="0.00", align=CENTER)
         _put(D, (r, 5), row["y"], font=F_CELL, fmt="0.00", align=CENTER)
         _put(D, (r, 11), row["qty"], fmt=ACC0, align=CENTER)
-        _put(D, (r, 26), row["name"], font=F_CELL)
+        _put(D, (r, 26), text(row["name"]), font=F_CELL)
         _put(D, (r, 27), row["bends"], align=CENTER)
         _put(D, (r, 28), row["holes"], align=CENTER)
         _put(D, f"{PT}{r}", 1 if row["paint_on"] else 0, fill=YELLOW, align=CENTER)
@@ -334,8 +335,8 @@ def build_pricing_xlsx(project) -> bytes:
     for col, w in zip("ABCDEFGHIJKL", (22, 14, 12, 14, 14, 14, 14, 14, 14, 24, 14, 14)):
         S.column_dimensions[col].width = w
     _put(S, "A1", "ใบคิดราคา", font=F_TITLE, border=None)
-    info = [("ชื่องาน", project.job_name), ("ลูกค้า", meta.get("customer", "")), ("วันที่", date),
-            ("ไฟล์ต้นฉบับ", project.source_name), ("หมายเหตุ", meta.get("note", ""))]
+    info = [("ชื่องาน", text(project.job_name)), ("ลูกค้า", text(meta.get("customer", ""))), ("วันที่", text(date)),
+            ("ไฟล์ต้นฉบับ", text(project.source_name)), ("หมายเหตุ", text(meta.get("note", "")))]
     r = 3
     for k, v in info:
         _put(S, (r, 1), k, font=F_HEAD, border=None)
@@ -357,7 +358,7 @@ def build_pricing_xlsx(project) -> bytes:
             used.append(k)
     for mid, t in used:
         prow = row_of.get((mid, t))
-        _put(S, (r, 1), f"={PRICES}!A{prow}" if prow else f"{mid}", font=F_CELL, align=CENTER)
+        _put(S, (r, 1), f"={PRICES}!A{prow}" if prow else text(mid), font=F_CELL, align=CENTER)
         _put(S, (r, 2), t, font=F_CELL, align=CENTER)
         _put(S, (r, 3), f"={PRICES}!C{prow}" if prow else None, fmt=ACC2)
         _put(S, (r, 4), f"={PRICES}!D{prow}" if prow else None, fmt="0.00")
@@ -378,7 +379,7 @@ def build_pricing_xlsx(project) -> bytes:
     for g in res["groups"]:
         code = '"' + g["code"].replace('"', '""') + '"'             # detail column B holds the steel code
         label = g["code"] if g.get("name", g["code"]) == g["code"] else f'{g["name"]} ({g["code"]})'
-        _put(S, (r, 1), label, font=F_HEAD, align=CENTER)
+        _put(S, (r, 1), text(label), font=F_HEAD, align=CENTER)
         _put(S, (r, 2), g["thickness"], font=F_CELL, align=CENTER)
         _put(S, (r, 3), f"=SUMIF({rng('B')},{code},{rng('K')})", fmt=ACC0)
         _put(S, (r, 4), f"=SUMIF({rng('B')},{code},{rng('L')})", fmt=ACC2)
@@ -397,7 +398,7 @@ def build_pricing_xlsx(project) -> bytes:
         if e["unit"] != "job":
             continue
         rate, on = xr[e_i]
-        _put(S, (r, 1), e["name"], font=F_CELL)
+        _put(S, (r, 1), text(e["name"]), font=F_CELL)
         _put(S, (r, 2), "ต่องาน", font=F_CELL, align=CENTER)
         _put(S, (r, 9), f"=IF({on}=1,{rate},0)", fill=GOLD, fmt=ACC2)
         job_rows.append(r)
@@ -434,9 +435,9 @@ def build_pricing_xlsx(project) -> bytes:
             _head(S, (r, 1 + i), h, fill=GREY2)
         r += 1
         for p in excl:
-            _put(S, (r, 1), p.name, font=F_CELL)
+            _put(S, (r, 1), text(p.name), font=F_CELL)
             _put(S, (r, 2), p.qty, align=CENTER)
-            _put(S, (r, 3), p.category or p.auto_reason or "ผู้ใช้เลือกไม่ตัด", font=F_CELL)
+            _put(S, (r, 3), text(p.category or p.auto_reason or "ผู้ใช้เลือกไม่ตัด"), font=F_CELL)
             S.merge_cells(start_row=r, start_column=3, end_row=r, end_column=8)
             r += 1
 
@@ -457,7 +458,7 @@ def build_pricing_xlsx(project) -> bytes:
             x, y = row["x"], row["y"]
             a1 = f"{int(o['w'] // (x + m_val))} × {int(o['l'] // (y + m_val))} = {o['count1']}"
             a2 = f"{int(o['w'] // (y + m_val))} × {int(o['l'] // (x + m_val))} = {o['count2']}"
-            vals = [row["name"], x, y, sheet_key(o), "มี" if o["on"] else "ไม่มี", a1, a2, o["count"], o["sheet_price"],
+            vals = [text(row["name"]), x, y, sheet_key(o), "มี" if o["on"] else "ไม่มี", a1, a2, o["count"], o["sheet_price"],
                     o["metal"], "✓" if pick else ""]
             for c, v in enumerate(vals, 1):
                 _put(C, (rc, c), v, font=F_CELL if c == 1 else F_NUM, fill=fill, fmt=ACC0 if c in (9, 10) else None)
