@@ -26,20 +26,50 @@
     <span class="job-meta" id="jobMeta"></span>
   </div>
   <div class="top-actions" id="topActions" hidden>
-    <button class="btn ghost" id="btnNew">เปิดไฟล์ใหม่</button>
-    <button class="btn ghost" id="btnSave" title="บันทึกงานนี้เป็นไฟล์ .sheetflat เพื่อเปิดต่อหรือส่งให้คนอื่น">บันทึกงาน</button>
-    <label class="field-inline">โหมดค่ายืด
-      <select id="profileSel"></select>
-    </label>
-    <button class="btn ghost" id="btnProfile">แก้ตารางค่ายืด</button>
-    <button class="btn" id="btnPrice">คิดราคา</button>
-    <button class="btn" id="btnXlsx">ส่งออก Excel</button>
-    <button class="btn primary" id="btnAll">ส่งออก DXF ทั้งหมด (.zip)</button>
+    <div class="menu" data-menu="file">
+      <button class="btn ghost menu-btn" type="button">ไฟล์งาน <i class="chev" aria-hidden="true"></i></button>
+      <div class="menu-pop" role="menu" aria-label="ไฟล์งาน" hidden>
+        <button type="button" role="menuitem" id="btnNew"><span>เปิดไฟล์ใหม่</span><kbd>Ctrl O</kbd></button>
+        <button type="button" role="menuitem" id="btnSave"><span>บันทึกงาน<small>ไฟล์ .sheetflat เปิดต่อหรือส่งให้คนอื่นได้</small></span><kbd>Ctrl S</kbd></button>
+      </div>
+    </div>
+    <div class="menu" data-menu="profile">
+      <button class="btn ghost menu-btn" type="button" title="โหมดค่ายืดที่ใช้กับงานนี้"><span class="menu-key">ค่ายืด</span><b class="menu-val" id="profileName"></b> <i class="chev" aria-hidden="true"></i></button>
+      <div class="menu-pop" role="menu" aria-label="โหมดค่ายืด" hidden>
+        <p class="menu-label">โหมดค่ายืดของงานนี้</p>
+        <div id="profileItems" role="group"></div>
+        <hr>
+        <button type="button" role="menuitem" id="btnProfile"><span>แก้ตารางค่ายืด…</span></button>
+      </div>
+      <select id="profileSel" hidden aria-hidden="true" tabindex="-1"></select>
+    </div>
+    <span class="top-sep" aria-hidden="true"></span>
+    <button class="btn" id="btnPrice" type="button">คิดราคา <kbd>P</kbd></button>
+    <div class="menu" data-menu="export">
+      <button class="btn primary menu-btn" type="button" id="btnExport">ดาวน์โหลด <i class="chev" aria-hidden="true"></i></button>
+      <div class="menu-pop menu-wide" role="menu" aria-label="ดาวน์โหลด" hidden>
+        <button type="button" role="menuitem" id="btnAll"><span>DXF ทั้งหมด + Excel<small>ไฟล์ .zip พร้อมส่งเครื่องเลเซอร์</small></span><kbd>Ctrl E</kbd></button>
+        <button type="button" role="menuitem" id="btnXlsx"><span>ใบสรุปงาน (Excel)</span></button>
+        <button type="button" role="menuitem" id="btnPriceXlsx"><span>ใบคิดราคา (Excel)</span></button>
+        <hr>
+        <button type="button" role="menuitem" id="btnSteps"><span>STEP แยกชิ้น (.zip)<small>เปิดใน SolidWorks ได้ทีละชิ้น</small></span></button>
+      </div>
+    </div>
   </div>
-  <button class="theme-btn" id="btnTheme" type="button" aria-label="เปลี่ยนสีหน้าจอ" title="เปลี่ยนสีหน้าจอ">
-    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.8a7.2 7.2 0 0 1 0 14.4z" fill="currentColor"/></svg>
-    <span id="themeLabel">อัตโนมัติ</span>
-  </button>
+  <div class="menu menu-more" data-menu="more">
+    <button class="icon-btn menu-btn" type="button" aria-label="เมนูเพิ่มเติม" title="เมนูเพิ่มเติม">
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>
+    </button>
+    <div class="menu-pop" role="menu" aria-label="เมนูเพิ่มเติม" hidden>
+      <button type="button" role="menuitem" id="btnPalette" class="bench-only"><span>ค้นหาคำสั่งหรือชิ้นส่วน</span><kbd>Ctrl K</kbd></button>
+      <button type="button" role="menuitem" id="btnKeys"><span>คีย์ลัดทั้งหมด</span><kbd>?</kbd></button>
+      <hr>
+      <p class="menu-label">สีหน้าจอ</p>
+      <button type="button" role="menuitemradio" data-theme-pick="auto" aria-checked="false"><span>อัตโนมัติ (ตาม Windows)</span></button>
+      <button type="button" role="menuitemradio" data-theme-pick="light" aria-checked="false"><span>สว่าง</span></button>
+      <button type="button" role="menuitemradio" data-theme-pick="dark" aria-checked="false"><span>มืด</span></button>
+    </div>
+  </div>
 </header>
 
 <div class="demo-banner" id="demoBanner" hidden>
@@ -73,11 +103,13 @@
         </li>
         <li>
           <h2>วางไฟล์ Assembly</h2>
+          <label class="hint" style="display:block;margin:0 0 8px">ไฟล์ DXF ไม่มีข้อมูลความหนา ใส่ความหนาที่ใช้กับทุกชิ้น (แก้รายชิ้นได้ทีหลัง) <input type="number" id="dxfT" value="1.2" step="0.1" min="0.05" max="50" style="width:80px"> มม.</label>
+          <label class="switch"><input type="checkbox" id="splitFused" checked> แยกชิ้นอัตโนมัติ ถ้าลูกค้าส่งมารวมเป็นก้อนเดียว (เดาจากความหนาเหล็กที่มีในตาราง ควรตรวจเทียบแบบ)</label>
           <div class="drop" id="drop" tabindex="0" role="button" aria-label="เลือกหรือวางไฟล์ STEP">
             <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
             <p class="drop-main">ลากไฟล์ .step มาวาง หรือกดเพื่อเลือก</p>
-            <p class="drop-sub">.step และ .stp ใช้ได้ทันที · .sldasm ใช้ได้เฉพาะเครื่องที่ติดตั้ง SolidWorks · ไฟล์งานที่บันทึกไว้ (.sheetflat) วางที่นี่ได้เหมือนกัน</p>
-            <input type="file" id="file" accept=".step,.stp,.sldasm,.sldprt,.sheetflat" hidden>
+            <p class="drop-sub">.step และ .stp ใช้ได้ทันที · .dxf (แบบคลี่ที่มีอยู่แล้ว) เปิดได้ โดยทุกเส้นขอบปิดเป็น 1 ชิ้น · .sldasm ใช้ได้เฉพาะเครื่องที่ติดตั้ง SolidWorks · ไฟล์งานที่บันทึกไว้ (.sheetflat) วางที่นี่ได้เหมือนกัน</p>
+            <input type="file" id="file" accept=".step,.stp,.sldasm,.sldprt,.dxf,.sheetflat" hidden>
           </div>
           <button class="btn small load-btn" type="button" id="loadJob">เปิดงานที่บันทึกไว้ (.sheetflat)</button>
           <details class="pathbox">
@@ -174,30 +206,48 @@
     <div class="stage-bar">
       <div class="stage-title" id="stageTitle"></div>
       <div class="seg" id="viewSeg" role="group" aria-label="มุมมองชิ้นงาน" hidden>
-        <button class="seg-btn" id="v2d" aria-pressed="true" title="แบบคลี่ 2D">2D แบบคลี่</button>
-        <button class="seg-btn" id="v3d" aria-pressed="false" title="ชิ้นงานพับแล้ว 3D หมุนดูได้">3D</button>
+        <button class="seg-btn" id="v2d" aria-pressed="true" title="แบบคลี่ 2D (V สลับ)">2D แบบคลี่</button>
+        <button class="seg-btn" id="v3d" aria-pressed="false" title="ชิ้นงาน 3D หมุนดูได้ (V สลับ)">3D</button>
       </div>
       <div class="tools" id="tools3d" role="toolbar" aria-label="เครื่องมือ 3D" hidden>
         <span class="fold-ctl" id="foldCtl">
-          <button class="tool fold-btn" id="t3Fold" title="พับตามแบบทีละรอย (#1, #2, ...)">พับ</button>
+          <button class="tool fold-btn" id="t3Fold" title="พับ / คลี่ (Space)">พับ</button>
           <input type="range" id="t3Prog" min="0" max="1000" value="0" aria-label="ความคืบหน้าการพับ">
         </span>
-        <button class="tool" id="t3Fit" title="ดูทั้งหมด (F)">ดูทั้งหมด</button>
-        <button class="tool toggle" id="t3Dim" aria-pressed="true" title="ขนาดรวม (D)">ขนาดรวม</button>
-        <button class="tool toggle" id="t3Ang" aria-pressed="true" title="มุมพับ (A)">องศา</button>
-        <button class="tool toggle" id="t3Len" aria-pressed="false" title="ความยาวขอบ (L)">ความยาว</button>
-        <button class="tool toggle" id="t3Hole" aria-pressed="false" title="ขนาดรูและรัศมีโค้ง (H)">รู/โค้ง</button>
-        <button class="tool" data-view3="front" title="มองด้านหน้า">หน้า</button>
-        <button class="tool" data-view3="top" title="มองด้านบน">บน</button>
-        <button class="tool" data-view3="right" title="มองด้านข้าง">ข้าง</button>
-        <button class="tool" data-view3="iso" title="มุมเอียง 3 มิติ">ไอโซ</button>
+        <div class="menu" data-menu="show3">
+          <button class="tool menu-btn" type="button">แสดง <i class="chev" aria-hidden="true"></i></button>
+          <div class="menu-pop" role="menu" aria-label="แสดงบนชิ้นงาน 3D" hidden>
+            <button type="button" role="menuitemcheckbox" id="t3Dim" aria-checked="true"><span>ขนาดรวม</span><kbd>D</kbd></button>
+            <button type="button" role="menuitemcheckbox" id="t3Ang" aria-checked="true"><span>มุมพับ</span><kbd>A</kbd></button>
+            <button type="button" role="menuitemcheckbox" id="t3Len" aria-checked="false"><span>ความยาวขอบ</span><kbd>L</kbd></button>
+            <button type="button" role="menuitemcheckbox" id="t3Hole" aria-checked="false"><span>รูและรัศมีโค้ง</span><kbd>H</kbd></button>
+            <hr>
+            <button type="button" role="menuitemcheckbox" id="t3Press" aria-checked="false"><span>จำลองเครื่องพับ<small>มีด ดาย ฉากหลัง และลำดับพับจริง</small></span><kbd>G</kbd></button>
+          </div>
+        </div>
+        <div class="menu" data-menu="view3">
+          <button class="tool menu-btn" type="button">มุมมอง <i class="chev" aria-hidden="true"></i></button>
+          <div class="menu-pop" role="menu" aria-label="มุมมอง 3D" hidden>
+            <button type="button" role="menuitem" id="t3Fit"><span>ดูทั้งหมด</span><kbd>F</kbd></button>
+            <hr>
+            <button type="button" role="menuitem" data-view3="iso"><span>มุมเอียง 3 มิติ</span><kbd>1</kbd></button>
+            <button type="button" role="menuitem" data-view3="front"><span>ด้านหน้า</span><kbd>2</kbd></button>
+            <button type="button" role="menuitem" data-view3="top"><span>ด้านบน</span><kbd>3</kbd></button>
+            <button type="button" role="menuitem" data-view3="right"><span>ด้านข้าง</span><kbd>4</kbd></button>
+          </div>
+        </div>
       </div>
       <div class="tools" id="tools2d" role="toolbar" aria-label="เครื่องมือดู">
         <button class="tool" id="tFit" title="ดูทั้งหมด (F)">ดูทั้งหมด</button>
-        <button class="tool toggle" id="tBend" aria-pressed="true" title="เส้นพับ (B)">เส้นพับ</button>
-        <button class="tool toggle" id="tDim" aria-pressed="true" title="ขนาด (D)">ขนาด</button>
-        <button class="tool toggle" id="tName" aria-pressed="true" title="ชื่อชิ้น (N)">ชื่อชิ้น</button>
         <button class="tool toggle" id="tMeasure" aria-pressed="false" title="วัดระยะ (M)">วัดระยะ</button>
+        <div class="menu" data-menu="show2">
+          <button class="tool menu-btn" type="button">แสดง <i class="chev" aria-hidden="true"></i></button>
+          <div class="menu-pop" role="menu" aria-label="แสดงบนแบบคลี่" hidden>
+            <button type="button" role="menuitemcheckbox" id="tBend" aria-checked="true"><span>เส้นพับ</span><kbd>B</kbd></button>
+            <button type="button" role="menuitemcheckbox" id="tDim" aria-checked="true"><span>ขนาด</span><kbd>D</kbd></button>
+            <button type="button" role="menuitemcheckbox" id="tName" aria-checked="true"><span>ชื่อชิ้น</span><kbd>N</kbd></button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
@@ -215,6 +265,7 @@
       <span id="stCoord">X – · Y –</span>
       <span id="stInfo" class="st-info">เลื่อนเมาส์ไปที่เส้นเพื่อดูความยาว/ขนาดรู · ลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม</span>
       <span id="stZoom"></span>
+      <button class="st-keys" type="button" id="stKeys" title="คีย์ลัดทั้งหมด"><kbd>Ctrl K</kbd> ค้นหา · <kbd>?</kbd> คีย์ลัด</button>
     </div>
   </section>
 
@@ -250,6 +301,27 @@
       <button class="btn" type="button" id="priceDefault">ตั้งเป็นค่าเริ่มต้น</button>
       <button class="btn primary" type="button" id="priceXlsx">ดาวน์โหลดใบคิดราคา (Excel)</button>
     </footer>
+  </form>
+</dialog>
+
+<!-- ============ command palette ============ -->
+<dialog id="palette" class="dlg palette" aria-label="ค้นหาคำสั่งหรือชิ้นส่วน">
+  <div class="pal-box">
+    <input type="text" id="palInput" placeholder="พิมพ์ชื่อชิ้นส่วน ความหนา หรือคำสั่ง เช่น ดาวน์โหลด, คิดราคา, Hook" autocomplete="off" spellcheck="false"
+      role="combobox" aria-expanded="true" aria-controls="palList" aria-autocomplete="list">
+    <ul id="palList" class="pal-list" role="listbox" aria-label="ผลการค้นหา"></ul>
+    <p class="pal-foot"><kbd>↑</kbd><kbd>↓</kbd> เลือก · <kbd>Enter</kbd> ทำ · <kbd>Esc</kbd> ปิด</p>
+  </div>
+</dialog>
+
+<!-- ============ shortcuts ============ -->
+<dialog id="keysDlg" class="dlg keys-dlg">
+  <form method="dialog" class="dlg-card">
+    <header class="dlg-head">
+      <h2>คีย์ลัด</h2>
+      <button class="x" value="cancel" aria-label="ปิด">×</button>
+    </header>
+    <div class="dlg-body keys-body" id="keysBody"></div>
   </form>
 </dialog>
 

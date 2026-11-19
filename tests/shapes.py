@@ -48,6 +48,54 @@ def bent_sheet(t, L1, L2, angle_deg, r_in, width):
     return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, width)).Shape()
 
 
+def bent_profile(t, r_in, lengths, turns, width):
+    """Several bends: a centre line of straight lengths with turns between them (degrees, + = left),
+    every bend with inner radius r_in. Profile in XY, extruded along Z (e.g. a U or hat channel)."""
+    rho = r_in + t / 2.0
+    x, y, h = 0.0, 0.0, 0.0
+    left, right = [], []
+
+    def off(px, py, hh, s):
+        return (px - s * math.sin(hh), py + s * math.cos(hh))
+
+    def rot(p, c, ang):
+        dx, dy = p[0] - c[0], p[1] - c[1]
+        return (c[0] + dx * math.cos(ang) - dy * math.sin(ang), c[1] + dx * math.sin(ang) + dy * math.cos(ang))
+
+    for i, L in enumerate(lengths):
+        nx, ny = x + L * math.cos(h), y + L * math.sin(h)
+        left.append(("line", off(x, y, h, t / 2), off(nx, ny, h, t / 2)))
+        right.append(("line", off(x, y, h, -t / 2), off(nx, ny, h, -t / 2)))
+        x, y = nx, ny
+        if i < len(turns):
+            a = math.radians(turns[i])
+            c = off(x, y, h, rho if a > 0 else -rho)
+            for side, lst in ((t / 2, left), (-t / 2, right)):
+                p0 = off(x, y, h, side)
+                lst.append(("arc", p0, rot(p0, c, a / 2), rot(p0, c, a)))
+            x, y = rot((x, y), c, a)
+            h += a
+    segs = []
+
+    def add(e):
+        if e[0] == "line":
+            segs.append(BRepBuilderAPI_MakeEdge(_P(*e[1]), _P(*e[2])).Edge())
+        else:
+            segs.append(BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(_P(*e[1]), _P(*e[2]), _P(*e[3])).Value()).Edge())
+
+    for e in left:
+        add(e)
+    add(("line", left[-1][-1], right[-1][-1]))
+    for e in reversed(right):
+        add(("line", e[2], e[1]) if e[0] == "line" else ("arc", e[3], e[2], e[1]))
+    add(("line", right[0][1], left[0][1]))
+    w = BRepBuilderAPI_MakeWire()
+    for e in segs:
+        w.Add(e)
+    face = BRepBuilderAPI_MakeFace(w.Wire()).Face()
+    return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, width)).Shape()
+
+
 def flat_plate(t, w, h, hole_d=None):
     s = BRepPrimAPI_MakeBox(w, h, t).Shape()
     if hole_d:
@@ -81,3 +129,13 @@ def write_step(shape, path):
     w = STEPControl_Writer()
     w.Transfer(shape, STEPControl_AsIs)
     assert w.Write(str(path)) == IFSelect_RetDone
+
+
+def sharp_profile(points, length):
+    """A profile with sharp corners (no bend radius, like an L/U drawn as an extrusion), extruded along Z."""
+    w = BRepBuilderAPI_MakeWire()
+    for i in range(len(points)):
+        p, q = points[i], points[(i + 1) % len(points)]
+        w.Add(BRepBuilderAPI_MakeEdge(_P(*p), _P(*q)).Edge())
+    face = BRepBuilderAPI_MakeFace(w.Wire()).Face()
+    return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, length)).Shape()

@@ -16,6 +16,8 @@ from .bend import BendModel
 from .brep import SolidData, extract_solid
 from .layout import Item, Placed, Sheet, pack, place_geometry, place_loops
 from .profiles import ProfileStore, bend_model, match_row, material_code, validate_pricing
+from .sharpbend import sharp_corners_to_bends
+from .splitfused import merge_copies, split_fused
 from .step_reader import PartDef, read_step
 from .unfold import FlatPiece, UnfoldError, prim_points, unfold
 
@@ -30,7 +32,12 @@ DEFAULT_SETTINGS = {
     "labels": False,
     "filename": "{job}_{code}_{t}mm",
     "sets": 1,                    # how many assemblies are made: every quantity is multiplied by this
+    "dxf_thickness": 1.2,         # a DXF has no thickness: the one used for every part opened from a DXF
+    "split_fused": True,          # a part that is several sheets fused into one solid: cut it apart (a guess)
 }
+
+
+MAX_VOLUME_DEV = 10.0      # % between (flat area x thickness) and the solid volume: beyond it the part is not bent sheet
 
 
 def safe_name(s: str) -> str:
@@ -71,6 +78,10 @@ class PartRecord:
     checks: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     bbox3: tuple = ()
+    sharp_note: str = ""                  # set when sharp (no radius) corners were read as R 0 bends
+    forced: bool = False                  # the user chose to cut it: the automatic "not sheet metal" checks no longer exclude it
+    flat_src: list | None = None          # parts opened from a DXF: the flat pieces as drawn (nothing to unfold)
+    split_note: str = ""                  # set when this part was cut out of a solid fused from several sheets (a guess)
 
     def thickness_used(self, profile) -> float:
         t = self.t_override if self.t_override else self.measured_t
@@ -131,12 +142,72 @@ class Project:
         kw = [k.lower() for k in self.store.data.get("exclude_keywords", [])]
         for n, (nm, qty, solid) in enumerate(entries):
             self.progress.update(msg=f"วิเคราะห์ {nm}", done=n)
-            self.parts.append(self._analyze_part(f"p{n + 1}", nm, qty, solid, kw))
+            rec = self._analyze_part("p?", nm, qty, solid, kw)
+            self.parts.extend(self._maybe_split(rec, kw) or [rec])
+        for i, rec in enumerate(self.parts):
+            rec.id = f"p{i + 1}"
         self.progress.update(state="unfolding", done=0)
         self.recompute()
         if state:
             self.apply_state(state)
         self.progress.update(state="done", done=len(entries), msg="เสร็จแล้ว")
+
+    def load_dxf(self, path: str, state: dict | None = None):
+        """Open a DXF: every closed outline is a flat part (see dxf_import.py). Thickness = settings["dxf_thickness"]."""
+        from .dxf_import import read_dxf
+        self.progress.update(state="reading", msg="กำลังอ่านไฟล์ DXF")
+        imp = read_dxf(path)
+        t = float(self.settings.get("dxf_thickness") or 1.2)
+        self.root_name = self.job_name
+        self.progress.update(state="analyzing", total=len(imp.parts), done=0)
+        for i, dp in enumerate(imp.parts, start=1):
+            pc = dp.piece
+            x0, y0, x1, y1 = pc.bbox
+            sd = SolidData(faces=[], edges=[], volume=pc.area * t, area=2 * pc.area,
+                           bbox=(np.array([x0, y0, 0.0]), np.array([x1, y1, t])))
+            an = SheetAnalysis(ok=True, thickness=t, thickness_weight=1.0)
+            rec = PartRecord(id=f"p{i}", name=dp.name or f"{self.job_name}-{i}", qty=dp.count, sd=sd, analysis=an, measured_t=round(t, 3),
+                             material_id=self.settings["material"], qty_asm=dp.count)
+            rec.bbox3 = (x1 - x0, y1 - y0, t)
+            rec.flat_src = [pc]
+            self.parts.append(rec)
+        self.progress.update(state="unfolding", done=0)
+        self.dxf_notes = imp.notes
+        self.recompute()
+        if state:
+            self.apply_state(state)
+        self.progress.update(state="done", done=len(imp.parts), msg="เสร็จแล้ว")
+
+    def _looks_fused(self, rec: PartRecord) -> bool:
+        """Could this one solid be several sheet parts fused together?"""
+        an, sd = rec.analysis, rec.sd
+        planes = [f for f in sd.faces if f.kind == "plane"]
+        if an is None or len(sd.faces) < 10 or not 4 <= len(planes) <= 600:
+            return False
+        if not an.ok:
+            return True                                     # no single thickness: maybe sheets of different thickness
+        if len(an.pieces) > 1:
+            return True                                     # sheet pieces that only touch each other
+        skin = sum(sd.faces[i].area for i in an.skin_ids if sd.faces[i].kind == "plane") or 1.0
+        left = sum(sd.faces[i].area for i, (d, _) in an.infos.items() if i not in an.skin_ids and 0.1 <= d <= 12.7)
+        return left > 0.25 * skin and left > 50.0           # plates of another thickness left over
+
+    def _maybe_split(self, rec: PartRecord, kw) -> list[PartRecord] | None:
+        if not self.settings.get("split_fused") or not self._looks_fused(rec):
+            return None
+        try:
+            res = split_fused(rec.shape, sorted({r["thickness"] for r in self.profile["table"]}),
+                              self.profile.get("match_tol", 0.06))
+        except Exception:   # noqa
+            return None
+        if not res.split:
+            return None
+        out = []
+        for k, (solid, cnt) in enumerate(merge_copies(res.solids), start=1):
+            sub = self._analyze_part("p?", f"{rec.name}.{k}", rec.qty_asm * cnt, solid, kw)
+            sub.split_note = " ".join(res.notes) + " ตรวจเทียบกับแบบก่อนตัด"
+            out.append(sub)
+        return out
 
     def _analyze_part(self, pid, name, qty, solid, kw) -> PartRecord:
         sd = extract_solid(solid)
@@ -147,6 +218,17 @@ class Project:
             an = analyze(sd)
         except Exception as ex:   # noqa
             an = SheetAnalysis(ok=False, reason=f"วิเคราะห์ไม่สำเร็จ: {ex}")
+        # one solid whose flanges meet at sharp corners (drawn with no bend radius): the corners are bends
+        # with inner radius 0 (below the 0.2 mm table limit, so a 90 degree corner uses the bend table)
+        if an.ok and len(an.pieces) > 1:
+            try:
+                fixed = sharp_corners_to_bends(solid, sd, an)
+            except Exception:   # noqa
+                fixed = None
+            if fixed:
+                _, sd, an, n = fixed
+                rec.sd = sd
+                rec.sharp_note = f"มุมพับคม {n} จุด (แบบไม่มีรัศมี) คิดเป็นรอยพับรัศมีใน 0 มม."
         rec.analysis = an
         rec.measured_t = round(an.thickness, 3) if an.thickness else 0.0
         low = name.lower()
@@ -162,10 +244,31 @@ class Project:
     # ------------------------------------------------------------------ unfolding / checks
     def _ensure_flat(self, rec: PartRecord):
         """(Re)compute the flat pattern when the inputs changed."""
+        if (rec.status == "excluded" and rec.reason_code == "off_table" and rec.analysis is not None and rec.analysis.ok
+                and match_row(self.profile, rec.measured_t, rec.material_id) is not None):
+            rec.status, rec.reason_code, rec.auto_reason, rec.include, rec.flat_key = "sheet", "", "", True, None   # the table now has this thickness
         if rec.status != "sheet" or rec.analysis is None or not rec.analysis.ok:
             return
         prof = self.profile
         t = rec.thickness_used(prof)
+        if (rec.flat_src is None and not rec.forced and rec.t_override is None
+                and match_row(prof, rec.measured_t, rec.material_id) is None):
+            # looks like sheet metal, but its thickness is not one of the shop's steels (screws, thick plate, profiles):
+            # not cut until the user says so; then it is unfolded with the K-factor at its measured thickness
+            rec.status, rec.reason_code = "excluded", "off_table"
+            rec.auto_reason = (f"ความหนา {rec.measured_t:g} มม. ไม่อยู่ในตารางเหล็กของโรงงาน - ไม่นำไปตัดไว้ก่อน "
+                               "(กด “นำมาตัดอยู่ดี” จะคำนวณด้วย K-factor ที่ความหนานี้)")
+            rec.include = False
+            rec.pieces = []
+            return
+        if rec.flat_src is not None:                          # opened from a DXF: already flat, only the volume follows t
+            pc = rec.flat_src[0]
+            rec.pieces, rec.unfold_error, rec.warnings = list(rec.flat_src), "", []
+            rec.sd.volume = pc.area * t
+            rec.flat_key = ("dxf", t)
+            rec.checks = {"volume_dev_pct": None, "volume": rec.sd.volume, "flat_area": pc.area, "bends_total": 0,
+                          "bends_table": 0, "bends_k": 0, "closed": True, "pieces": 1, "thickness_weight": 1.0}
+            return
         model = bend_model(prof, t, material_id=rec.material_id)
         key = (prof["id"], rec.material_id, t, model.bd90, model.k_factor, model.angle_tol_deg, model.table_max_r, model.jog_use_k,
                model.simplify_bends,
@@ -215,6 +318,14 @@ class Project:
             "pieces": len(pieces),
             "thickness_weight": rec.analysis.thickness_weight,
         }
+        if dev is not None and abs(dev) > MAX_VOLUME_DEV and not rec.forced:
+            # area x thickness must equal the volume of a sheet part; a screw, nut or casting never does
+            rec.pieces, rec.checks = [], {}
+            rec.status, rec.reason_code = "excluded", "volume_mismatch"
+            rec.auto_reason = (f"แผ่นคลี่ × ความหนา ต่างจากปริมาตรชิ้นงาน {dev:+.1f}% - ไม่ใช่แผ่นเหล็กพับ "
+                               "(เช่น น็อต สกรู ชิ้นหล่อ) ไม่นำไปตัดไว้ก่อน")
+            rec.include = False
+            return
         if dev is not None and abs(dev) > 1.5:
             rec.warnings.append(f"พื้นที่คลี่ไม่ตรงกับปริมาตรชิ้นงาน ({dev:+.2f}%) - ตรวจสอบว่ามีรูปทรงพิเศษ (ปั๊มนูน/เฉียง/ผิวโค้ง)")
         uns = rec.analysis.unsupported_faces
@@ -224,10 +335,47 @@ class Project:
                 rec.warnings.append(f"มีผิวที่ไม่รองรับ {len(uns)} ผิว (กรวย/ผิวโค้งอิสระ) - ตรวจเทียบกับแบบ")
         if len(pieces) > 1:
             rec.warnings.append(f"ชิ้นงานนี้คลี่ได้ {len(pieces)} ชิ้นแยกกัน")
+        if rec.split_note:
+            rec.warnings.append(rec.split_note)
+        if rec.sharp_note:
+            rec.warnings.append(rec.sharp_note)
         wmax = max(p.bbox[2] - p.bbox[0] for p in pieces)
         hmax = max(p.bbox[3] - p.bbox[1] for p in pieces)
         if min(wmax, hmax) > 0 and max(wmax, hmax) / min(wmax, hmax) > 15:
             rec.warnings.append("สัดส่วนยาวมาก (>15:1) - ถ้าเป็นเหล็กฉาก/โปรไฟล์ที่ซื้อมา ให้ติ๊กไม่ตัด")
+
+    def steps_zip(self) -> bytes:
+        """Every part as its own STEP file (a part opens on its own in SolidWorks and other CAD programs):
+        folder "ตัด" = parts that go to the laser, "ไม่ตัด" = the rest. A part cut out of a fused solid keeps its place."""
+        import io
+        import os
+        import tempfile
+        import zipfile
+
+        from OCP.IFSelect import IFSelect_RetDone
+        from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+        prof = self.profile
+        buf = io.BytesIO()
+        used: dict[str, int] = {}
+        with self.lock, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z, tempfile.TemporaryDirectory() as td:
+            for rec in self.parts:
+                if rec.shape is None:
+                    continue
+                cut = rec.include and rec.status == "sheet"
+                t = f"_{fmt_t(rec.thickness_used(prof))}mm" if rec.measured_t else ""
+                base = safe_name(f"{rec.name}{t}_x{rec.qty_asm}")
+                folder = "ตัด" if cut else "ไม่ตัด"
+                key = f"{folder}/{base}".lower()
+                used[key] = used.get(key, 0) + 1
+                name = f"{folder}/{base}{'' if used[key] == 1 else '_' + str(used[key])}.step"
+                path = os.path.join(td, "p.step")
+                w = STEPControl_Writer()
+                w.Transfer(rec.shape, STEPControl_AsIs)
+                if w.Write(path) != IFSelect_RetDone:
+                    continue
+                z.write(path, name)
+                os.remove(path)
+        return buf.getvalue()
 
     def sets(self) -> int:
         try:
@@ -309,10 +457,12 @@ class Project:
             rec = next(r for r in self.parts if r.id == pid)
             if "include" in patch:
                 rec.include = bool(patch["include"])
-                if rec.include and rec.status == "excluded" and rec.reason_code in ("keyword", "not_sheet", "unfold_failed"):
+                if rec.include and rec.status == "excluded" and rec.reason_code in (
+                        "keyword", "not_sheet", "unfold_failed", "off_table", "volume_mismatch"):
                     # user forces inclusion: try to treat as sheet
                     if rec.analysis and rec.analysis.ok:
                         rec.status = "sheet"
+                        rec.forced = True
                         rec.flat_key = None
                     else:
                         rec.include = False
@@ -383,6 +533,7 @@ class Project:
                     rec.include = True
                     if rec.status == "excluded":
                         rec.status = "sheet"
+                        rec.forced = True
                         rec.flat_key = None
             self.recompute()
 
@@ -475,6 +626,7 @@ class Project:
                 want = bool(d.get("include", rec.include))
                 if want and rec.status == "excluded" and rec.analysis and rec.analysis.ok:
                     rec.status = "sheet"
+                    rec.forced = True
                 rec.include = want and rec.status == "sheet"
                 rec.flat_key = None
             if st.get("pricing"):

@@ -92,6 +92,8 @@ def test_angle_tolerance_default_is_zero(store):
 
 def test_thickness_not_in_table_falls_back_to_k(store):
     pr = run(store, [("T13", shapes.bent_sheet(1.3, 40, 25, 90, 1.3, 30))])
+    pid = next(x["id"] for x in pr.to_json()["parts"] if x["name"] == "T13")
+    pr.update_part(pid, {"include": True})              # not cut by default (1.3 mm is not a shop steel); the user cuts it anyway
     p, long, _ = flat_len(pr, "T13")
     assert not p["thickness"]["matched"]
     assert p["flat"]["bends"][0]["method"] == "k"
@@ -135,3 +137,31 @@ def test_angles_are_written_as_the_inside_angle(store):
     assert long45 == pytest.approx(40 + 25 + math.radians(45) * (0.2 + 0.5 * 1.0), abs=0.01)
     p90, _, _ = flat_len(pr, "B90")
     assert p90["flat"]["bends"][0]["angle_in"] == pytest.approx(90, abs=0.01)
+
+
+def test_thickness_not_in_the_table_is_not_cut_until_the_user_says_so(store):
+    pr = run(store, [("Plate5", shapes.bent_sheet(5.0, 40, 30, 90, 3.0, 50))])
+    p = next(x for x in pr.to_json()["parts"] if x["name"] == "Plate5")
+    assert p["status"] == "excluded" and p["reason_code"] == "off_table" and not pr.groups
+    pr.update_part(p["id"], {"include": True})                      # "นำมาตัดอยู่ดี": K-factor at 5 mm
+    p = next(x for x in pr.to_json()["parts"] if x["name"] == "Plate5")
+    assert p["status"] == "sheet" and p["include"] and p["flat"]["bends"][0]["method"] == "k"
+    assert [g.code for g in pr.groups] == ["ZN#5mm"]
+
+
+def test_table_gaining_the_thickness_brings_the_part_back(store):
+    pr = run(store, [("Plate5", shapes.bent_sheet(5.0, 40, 30, 90, 3.0, 50))])
+    assert not pr.groups
+    store.data["profiles"][0]["table"].append({"gauge": "#5mm", "thickness": 5.0, "bd": 7.5})
+    pr.recompute()
+    assert [g.code for g in pr.groups] == ["ZN#5mm"]
+
+
+def test_solid_that_is_not_sheet_is_excluded_by_volume(store):
+    # a 1 mm "plate" that is really a 10 mm thick bar cannot unfold to the right volume
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    bar = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 40, 25, 1.0).Shape()
+    pr = run(store, [("Bar", bar)])
+    p = next(x for x in pr.to_json()["parts"] if x["name"] == "Bar")
+    assert p["status"] == "sheet" and p["checks"]["volume_dev_pct"] == pytest.approx(0, abs=0.01)    # a real plate stays

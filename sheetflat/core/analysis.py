@@ -115,6 +115,7 @@ class SheetAnalysis:
     pieces: list = field(default_factory=list)          # list of dicts {faces:set, other:set}
     notes: list = field(default_factory=list)
     unsupported_faces: list = field(default_factory=list)
+    infos: dict = field(default_factory=dict, repr=False)   # plane id -> (distance to the parallel partner, partner id)
 
 
 def estimate_thickness(sd: SolidData, max_t: float = 25.0):
@@ -169,15 +170,28 @@ def estimate_thickness(sd: SolidData, max_t: float = 25.0):
     return best_t, best_w / total_planar, infos
 
 
-def analyze(sd: SolidData, max_thickness: float = 12.7, min_thickness: float = 0.1) -> SheetAnalysis:
+def analyze(sd: SolidData, max_thickness: float = 12.7, min_thickness: float = 0.1,
+            force_t: float | None = None, infos: dict | None = None) -> SheetAnalysis:
+    """``force_t`` (with the ``infos`` from estimate_thickness) analyses the sheet pieces of that thickness only:
+    used to take a solid that was fused from sheets of different thickness apart (core/splitfused.py)."""
     res = SheetAnalysis()
     planes = [f for f in sd.faces if f.kind == "plane"]
     if len(planes) < 2:
         res.reason = "ไม่มีผิวระนาบพอที่จะเป็นแผ่นโลหะ (ทรงกลม/ทรงกระบอก/ผิวโค้งอิสระ)"
         return res
-    t, wfrac, infos = estimate_thickness(sd)
+    if force_t is None:
+        t, wfrac, infos = estimate_thickness(sd)
+    else:
+        if infos is None:
+            _, _, infos = estimate_thickness(sd)
+        tol0 = max(0.02, 0.03 * force_t)
+        near = [(d, sd.faces[fid].area) for fid, (d, _) in infos.items() if abs(d - force_t) <= tol0]
+        w = sum(a for _, a in near)
+        t = sum(d * a for d, a in near) / w if w > 0 else 0.0
+        wfrac = w / (sum(f.area for f in planes) or 1.0)
     res.thickness, res.thickness_weight = t, wfrac
-    if t <= 0 or wfrac < 0.30:
+    res.infos = infos
+    if t <= 0 or (wfrac < 0.30 and force_t is None):
         res.reason = "ไม่พบความหนาคงที่สม่ำเสมอ (ไม่ใช่แผ่นโลหะ)"
         return res
     if t > max_thickness:

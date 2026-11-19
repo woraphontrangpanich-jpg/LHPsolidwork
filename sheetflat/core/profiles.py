@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import threading
 from pathlib import Path
 
 from .bend import BendModel
+from .bend_xlsx import read_profiles, write_profiles
+
+SHIPPED_BEND_XLSX = Path(__file__).resolve().parent.parent / "bend_tables.xlsx"   # the shop standard, in git
 
 DEFAULT_MATERIALS = [
     {"id": "ZN", "name": "เหล็กซิงค์ (ZN)", "prefix": "ZN"},
@@ -173,8 +177,13 @@ DEFAULT_EXCLUDE_KEYWORDS = [
 class ProfileStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self.bend_path = self.path.with_name("bend_tables.xlsx")     # one sheet = one bend table (profile)
+        self.bend_error = ""                                          # why the workbook could not be read, if so
+        self._bend_stamp = None
         self._lock = threading.Lock()
+        fresh_install = not self.path.exists()
         self.data = self._load()
+        self._sync_workbook(fresh_install)
 
     def _fresh(self):
         return {
@@ -216,6 +225,63 @@ class ProfileStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # ---- the Excel workbook with the bend tables is the source of the profiles
+    def _stamp(self):
+        try:
+            st = self.bend_path.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _sync_workbook(self, fresh_install=False):
+        """Startup: read the workbook. Missing: a fresh install starts from the workbook shipped with the
+        program (sheetflat/bend_tables.xlsx, the shop standard); an older install builds it from its profiles."""
+        if not self.bend_path.exists() and fresh_install and SHIPPED_BEND_XLSX.exists():
+            try:
+                self.bend_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(SHIPPED_BEND_XLSX, self.bend_path)
+            except OSError:
+                pass
+        if self.bend_path.exists():
+            self._read_workbook()
+        else:
+            try:
+                write_profiles(self.bend_path, self.data["profiles"])
+            except OSError as ex:
+                self.bend_error = f"สร้างไฟล์ค่ายืด Excel ไม่ได้: {ex}"
+            self._bend_stamp = self._stamp()
+
+    def _read_workbook(self) -> bool:
+        stamp = self._stamp()
+        try:
+            profs = read_profiles(self.bend_path)
+            for p in profs:
+                _validate_profile(p)
+        except (ValueError, KeyError, OSError) as ex:
+            self.bend_error = str(ex)
+            self._bend_stamp = stamp               # do not complain again until the file changes
+            return False
+        self.bend_error = ""
+        self._bend_stamp = stamp
+        with self._lock:
+            self.data["profiles"] = profs
+            ids = [p["id"] for p in profs]
+            if self.data["active"] not in ids:
+                self.data["active"] = ids[0]
+        return True
+
+    def refresh(self) -> bool:
+        """Re-read the workbook if it changed on disk (edited in Excel, or a colleague's copy dropped in).
+        True when the profiles changed. A broken workbook keeps the last good tables and sets bend_error."""
+        stamp = self._stamp()
+        if stamp is None or stamp == self._bend_stamp:
+            return False
+        before = json.dumps(self.data["profiles"], sort_keys=True)
+        ok = self._read_workbook()
+        if ok:
+            self.save()
+        return ok and json.dumps(self.data["profiles"], sort_keys=True) != before
+
     def replace(self, data: dict):
         with self._lock:
             base = self._fresh()
@@ -229,10 +295,14 @@ class ProfileStore:
             ids = [p["id"] for p in base["profiles"]]
             if base["active"] not in ids:
                 base["active"] = ids[0]
+            write_profiles(self.bend_path, base["profiles"])      # PermissionError if it is open in Excel
+            self._bend_stamp = self._stamp()
+            self.bend_error = ""
             self.data = base
         self.save()
 
     def get(self, pid: str | None = None) -> dict:
+        self.refresh()
         pid = pid or self.data["active"]
         for p in self.data["profiles"]:
             if p["id"] == pid:

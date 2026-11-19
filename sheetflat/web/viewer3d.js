@@ -8,6 +8,7 @@
 import * as THREE from "./vendor/three.module.min.js";
 import { OrbitControls } from "./vendor/OrbitControls.js";
 import { mapPoint, anglesAt } from "./fold.js";
+import { PressSim } from "./pressview.js";
 
 const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtG = (n) => String(Math.round(n * 100) / 100);
@@ -48,6 +49,7 @@ export class Viewer3D {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.show = { size: true, angle: true, len: false, hole: false };
+    this.pressOn = false;                   // "พับ" runs the press brake simulation
     this.colors = {};
     this.lines = [];                        // pickable lines (Line objects with userData)
     this.dimLabels = [];
@@ -95,6 +97,8 @@ export class Viewer3D {
   }
   clear() {
     this.stopAnim();
+    if (this.inPress) this.exitPress();
+    if (this.sim) { this.sim.dispose(); this.sim = null; }
     for (const g of [this.root, this.dimGroup]) {
       for (const o of [...g.children]) {
         g.remove(o);
@@ -118,17 +122,18 @@ export class Viewer3D {
     const diag = box && !box.isEmpty() ? Math.max(1, box.getSize(new THREE.Vector3()).length()) : this.diag;
     const fov = (this.camera.fov * Math.PI) / 180, aspect = Math.min(1, this.camera.aspect || 1);
     const d = (diag * 0.62) / Math.sin(Math.atan(Math.tan(fov / 2) * aspect));
-    const dirs = { iso: [1, 0.9, 1.2], front: [0, 0, 1], top: [0, 1, 0.0001], right: [1, 0, 0] };
+    const dirs = { iso: [1, 0.9, 1.2], front: [0, 0, 1], top: [0, 1, 0.0001], right: [1, 0, 0], press: [1, 0.5, 0.75] };
     const dir = name ? new THREE.Vector3(...(dirs[name] || dirs.iso)).normalize()
       : this.camera.position.clone().sub(this.controls.target).normalize();
     this.camera.position.copy(ctr).addScaledVector(dir, d);
-    this.camera.near = this.diag / 300; this.camera.far = this.diag * 60;
+    this.camera.near = Math.max(0.05, diag / 400); this.camera.far = Math.max(this.diag, diag) * 60;
     this.camera.updateProjectionMatrix();
     this.controls.target.copy(ctr);
     this.controls.update();
     this.requestRender();
   }
   shownBox() {
+    if (this.inPress) return this.pressBox();
     if (this.F) return this.currentBox();
     this.scene.updateMatrixWorld();
     const box = new THREE.Box3();
@@ -221,8 +226,34 @@ export class Viewer3D {
     const ctr = box.getCenter(new THREE.Vector3());
     this.diag = Math.max(1, box.getSize(new THREE.Vector3()).length());
     this.root.position.sub(ctr);
+    this.rootPos = this.root.position.clone();
     this.setT(0);
     this.view("iso");
+    this.planAhead();
+  }
+
+  /* work out the bend order in the background as soon as the part is shown */
+  planAhead() {
+    const F = this.F, pc = F && F.pieces[0];
+    this.plan = null;
+    if (!pc || !pc.bends.length || typeof Worker === "undefined") return;
+    const id = (this.planId = (this.planId || 0) + 1);
+    try {
+      if (!this.worker) {
+        this.worker = new Worker(new URL("./planworker.js", import.meta.url), { type: "module" });
+        this.worker.onmessage = (e) => {
+          if (e.data.id !== this.planId || !this.F) return;
+          if (e.data.plan) this.plan = e.data.plan;
+          const w = this.planWaiters || []; this.planWaiters = [];
+          w.forEach((f) => f());
+        };
+      }
+      this.worker.postMessage({ id, pc: { bends: pc.bends, regions: pc.regions }, t: F.t });
+    } catch (_) { /* no worker: planned on the page when needed */ }
+  }
+  whenPlanned(fn) {
+    if (this.sim || this.plan || !this.worker) { fn(); return; }
+    (this.planWaiters = this.planWaiters || []).push(fn);
   }
 
   buildPiece(P, h, xoff) {
@@ -286,8 +317,17 @@ export class Viewer3D {
   setT(T, quiet) {
     const F = this.F; if (!F) return;
     F.T = T;
-    for (const pc of F.pieces) {
-      const ang = anglesAt(pc.bends, T, pc.order);
+    if (this.inPress) { this.setPressT(T, quiet); return; }
+    for (const pc of F.pieces) this.pose(pc, anglesAt(pc.bends, T, pc.order));
+    if (quiet) return;
+    const settled = Math.abs(T - Math.round(T)) < 1e-9;
+    if (settled && !this.anim) this.buildDims();
+    this.onState({ folded: T >= F.n - 1e-9, flat: T <= 1e-9, T, n: F.n, current: this.currentBend() });
+    this.requestRender();
+  }
+  /* move the vertices of a piece to the given bend angles */
+  pose(pc, ang) {
+    {
       pc.angles = ang;
       const attr = pc.geo.getAttribute("position"), arr = attr.array, b = pc.base, R = pc.regions;
       for (let i = 0, v = 0; v < pc.reg.length; v++, i += 3) {
@@ -308,11 +348,66 @@ export class Viewer3D {
         L.line.geometry.computeBoundingSphere();
       }
     }
+  }
+
+  /* ------------------------------------------------------------------ press brake simulation */
+  setPress(on) {
+    this.pressOn = on;
+    if (!on && this.inPress) { this.stopAnim(); this.exitPress(); this.setT(this.F ? this.F.T : 0); this.view("iso"); }
+  }
+  canPress() { return this.pressOn && this.F && this.F.pieces.length && this.F.pieces[0].bends.length > 0; }
+  ensureSim() {
+    if (!this.sim) {
+      const pc = this.F.pieces[0];
+      this.sim = new PressSim(this, pc, this.F.t, this.plan);
+      pc.order = this.sim.plan.order;            // the plain fold follows the same order
+    }
+    return this.sim;
+  }
+  enterPress() {
+    if (this.inPress) return;
+    this.ensureSim();
+    this.inPress = true;
+    this.closeCard();
+    this.root.matrixAutoUpdate = false;
+    this.sim.group.visible = true;
+    this.dimGroup.visible = false;
+    this.F.pieces.forEach((pc, i) => { if (i) pc.mesh.visible = false; });
+    const own = new Set(this.F.pieces[0].lines.map((x) => x.line));
+    for (const L of this.lines) L.visible = own.has(L);
+    this.view("press");
+  }
+  exitPress() {
+    this.inPress = false;
+    if (this.sim) this.sim.group.visible = false;
+    this.root.matrixAutoUpdate = true;
+    this.root.rotation.set(-Math.PI / 2, 0, 0);
+    if (this.rootPos) this.root.position.copy(this.rootPos);
+    this.root.updateMatrix();
+    if (this.F) this.F.pieces.forEach((pc) => { pc.mesh.visible = true; });
+    for (const L of this.lines) L.visible = true;
+    this.dimGroup.visible = this.show.size;
+    this.pressCap = null;
+    this.pressState = null;
+  }
+  setPressT(T, quiet) {
+    const F = this.F, sim = this.sim, pc = F.pieces[0];
+    F.T = T;
+    const st = sim.state(T);
+    this.pose(pc, st.a);
+    this.root.matrix.copy(st.M);
+    this.root.matrixWorldNeedsUpdate = true;
+    sim.show(st);
+    this.pressState = st;
+    this.pressCap = sim.caption(st);
     if (quiet) return;
-    const settled = Math.abs(T - Math.round(T)) < 1e-9;
-    if (settled && !this.anim) this.buildDims();
-    this.onState({ folded: T >= F.n - 1e-9, flat: T <= 1e-9, T, n: F.n, current: this.currentBend() });
+    this.onState({ folded: T >= F.n - 1e-9, flat: false, T, n: F.n, current: pc.bends[st.step.bend],
+      press: { k: st.k, total: sim.steps.length, text: st.ph.text } });
     this.requestRender();
+  }
+  pressBox() {
+    const R = this.sim.P.diag, half = this.sim.L / 2 + 20;
+    return new THREE.Box3(new THREE.Vector3(-half, -60, -0.45 * R - 30), new THREE.Vector3(half, 0.35 * R + 70, 0.55 * R + 50));
   }
   currentBox() {
     this.scene.updateMatrixWorld();
@@ -322,16 +417,29 @@ export class Viewer3D {
   }
   currentBend() {
     const F = this.F; if (!F || !F.pieces.length) return null;
+    if (this.inPress && this.pressState) return F.pieces[0].bends[this.pressState.step.bend];
     const pc = F.pieces[0], k = Math.floor(F.T);
     if (k < 0 || k >= pc.order.length || Math.abs(F.T - k) < 1e-9) return null;
     return pc.bends[pc.order[k]];
   }
 
-  play(target) {
+  play(target, done) {
     const F = this.F; if (!F) return;
     this.stopAnim();
     const from = F.T, dist = Math.abs(target - from);
-    if (dist < 1e-6) return;
+    if (dist < 1e-6) { if (done) done(); return; }
+    if (this.inPress) {
+      // real time: every phase of every hit at its own speed
+      const dur = (dist / F.n) * this.sim.seconds() * 1000 / (this.speed || 1), t0 = performance.now();
+      this.anim = (now) => {
+        const k = Math.min(1, (now - t0) / dur);
+        this.setT(from + (target - from) * k);
+        if (k < 1) this.animRaf = requestAnimationFrame(this.anim);
+        else { this.anim = null; if (done) done(); }
+      };
+      this.animRaf = requestAnimationFrame(this.anim);
+      return;
+    }
     const dur = Math.min(8, Math.max(0.6, dist * SEC_PER_BEND)) * 1000, t0 = performance.now();
     this.dimGroup.visible = false;
     this.anim = (now) => {
@@ -341,14 +449,44 @@ export class Viewer3D {
       const eased = whole + (frac < 1e-9 ? 0 : 0.5 - 0.5 * Math.cos(Math.PI * frac));
       this.setT(k >= 1 ? target : eased);
       if (k < 1) this.animRaf = requestAnimationFrame(this.anim);
-      else { this.anim = null; this.dimGroup.visible = this.show.size; this.setT(target); this.view(null); }
+      else { this.anim = null; this.dimGroup.visible = this.show.size; this.setT(target); this.view(null); if (done) done(); }
     };
     this.animRaf = requestAnimationFrame(this.anim);
   }
-  fold() { if (this.F) this.play(this.F.n); }
-  unfold() { if (this.F) this.play(0); }
+  fold() {
+    const F = this.F; if (!F) return;
+    if (!this.canPress()) { this.play(F.n); return; }
+    if (!this.sim && !this.plan && this.worker) {
+      // the bend order is still being worked out: say so, carry on when it is ready
+      this.pressCap = { title: "กำลังหาลำดับพับ…", line: "ลองทุกลำดับ ตรวจการชนกับมีด ดาย และเครื่อง", extra: [] };
+      this.requestRender();
+      if (!this.waitingFold) { this.waitingFold = true; this.whenPlanned(() => { this.waitingFold = false; this.pressCap = null; this.fold(); }); }
+      return;
+    }
+    this.stopAnim();
+    if (this.inPress) this.exitPress();
+    this.setT(0, true);
+    this.enterPress();
+    this.setT(0);
+    this.play(F.n, () => {
+      // finished: the part comes off the machine and is shown as drawn
+      setTimeout(() => { if (this.anim || !this.inPress) return; this.exitPress(); this.setT(F.n); this.view("iso"); }, 900);
+    });
+  }
+  unfold() { if (!this.F) return; if (this.inPress) { this.stopAnim(); this.exitPress(); this.setT(this.F.T); } this.play(0); }
   stopAnim() { if (this.animRaf) cancelAnimationFrame(this.animRaf); this.animRaf = null; this.anim = null; }
-  scrub(frac) { if (!this.F) return; this.stopAnim(); this.setT(frac * this.F.n); }
+  scrub(frac) {
+    if (!this.F) return;
+    this.stopAnim();
+    if (this.canPress() && frac > 0 && frac < 1) {
+      this.ensureSim();
+      if (!this.inPress) { this.setT(0, true); this.enterPress(); }
+      this.setT(frac * this.F.n);
+      return;
+    }
+    if (this.inPress) { this.exitPress(); this.view("iso"); }
+    this.setT(frac * this.F.n);
+  }
 
   /* ------------------------------------------------------------------ hover, pick, detail card */
   ray(e) {
@@ -400,7 +538,10 @@ export class Viewer3D {
     return { title: "เส้นโค้งอิสระ", rows: [["ความยาว", `${fmt(d.len)} มม.`], ...t] };
   }
   bendCard(b) {
-    return { title: `รอยพับ #${b.n}`, bend: true, rows: [
+    const plan = (this.sim && this.sim.plan) || this.plan;
+    const k = plan ? plan.order.indexOf(b.id) : -1;
+    const seq = k >= 0 ? [["ลำดับที่พับ", `${k + 1} จาก ${plan.order.length}`]] : [];
+    return { title: `รอยพับ #${b.n}`, bend: true, rows: [...seq,
       ["มุมด้านใน", `${fmtG(b.angle_in)}°`], ["ทิศ", b.dir === "up" ? "พับขึ้น" : "พับลง"], ["รัศมีใน (R)", `${fmt(b.r)} มม.`],
       ["วิธีคิด", b.method === "table" ? `ตารางค่ายืด BD ${fmt(b.bd)}` : `K-factor ${b.k}`], ["ความกว้างแถบพับ (BA)", `${fmt(b.ba)} มม.`],
       ["ความยาวรอยพับ", `${fmt(b.len)} มม.`], ["ความหนาแผ่น", `${fmt(this.thick)} มม.`]] };
@@ -454,7 +595,7 @@ export class Viewer3D {
       ctx.fillStyle = color; ctx.fillText(text, x, y);
     };
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    if (this.show.size && !this.anim) for (const l of this.dimLabels) { const s = this.toScreen(l.p, w, h); if (s) tag(l.text, s[0], s[1], c.dim); }
+    if (this.show.size && !this.anim && !this.inPress) for (const l of this.dimLabels) { const s = this.toScreen(l.p, w, h); if (s) tag(l.text, s[0], s[1], c.dim); }
     if (this.F) {
       this.scene.updateMatrixWorld();
       const cur = this.currentBend();
@@ -463,9 +604,11 @@ export class Viewer3D {
           const p = r ? mapPoint(x, y, z, r, pc.bends, pc.angles) : [x, y, z];
           return this.toScreen(new THREE.Vector3(p[0] + pc.xoff, p[1], p[2]).applyMatrix4(M), w, h);
         };
+        if (this.inPress && pc !== this.F.pieces[0]) continue;
         if (this.show.angle) for (const b of pc.bends) {
+          if (this.inPress && b !== cur) continue;
           const s = at(b.mid[0], b.mid[1], pc.h * (b.s > 0 ? 1 : -1), { kind: "bend", bend: b.id, chain: b.chain });
-          if (s) tag(`#${b.n} ${b.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmtG(b.angle_in)}°`, s[0], s[1], c.bend || "#cf4129", cur === b);
+          if (s) tag(b.angle_in < 1 ? `#${b.n} พับตบ` : `#${b.n} ${b.dir === "up" ? "พับขึ้น" : "พับลง"} ${fmtG(b.angle_in)}°`, s[0], s[1], c.bend || "#cf4129", cur === b);
         }
         if (this.show.len || this.show.hole) for (const L of pc.lines) {
           const d = L.line.userData, isLen = d.kind === "line", isHole = d.kind === "hole" || d.kind === "arc";
@@ -480,9 +623,20 @@ export class Viewer3D {
         }
       }
     }
+    if (this.pressCap) {
+      const P = this.pressCap, f = c.font || "sans-serif";
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      const lines = [[P.title, 700, c.ink], [P.line, 500, c.steel || "#4d5c68"], ...P.extra.map((x) => [x, 600, c.bend || "#cf4129"])];
+      const fontOf = (wt) => `${wt} ${wt === 700 ? 13.5 : 12.5}px ${f}`;
+      let wmax = 0;
+      for (const [txt, wt] of lines) { ctx.font = fontOf(wt); wmax = Math.max(wmax, ctx.measureText(txt).width); }
+      ctx.fillStyle = c.paper || "#fff"; ctx.globalAlpha = 0.9; ctx.fillRect(10, 10, wmax + 20, lines.length * 19 + 12); ctx.globalAlpha = 1;
+      lines.forEach(([txt, wt, col], i) => { ctx.font = fontOf(wt); ctx.fillStyle = col; ctx.fillText(txt, 20, 17 + i * 19); });
+      ctx.textBaseline = "middle";
+    }
     if (this.thick) {
       ctx.textAlign = "left"; ctx.fillStyle = c.steel || "#4d5c68"; ctx.font = `500 12.5px ${c.font || "sans-serif"}`;
-      const sz = this.size ? ` · ขนาดรวม ${fmt(this.size.x, 1)} × ${fmt(this.size.y, 1)} × ${fmt(this.size.z, 1)} มม.` : "";
+      const sz = this.size && !this.inPress ? ` · ขนาดรวม ${fmt(this.size.x, 1)} × ${fmt(this.size.y, 1)} × ${fmt(this.size.z, 1)} มม.` : "";
       ctx.fillText(`หนา ${fmt(this.thick, 2)} มม.${this.anim ? "" : sz}`, 14, h - 16);
     }
   }

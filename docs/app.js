@@ -71,7 +71,7 @@ async function initLanding() {
   $("#landProfile").addEventListener("change", updateLandHint);
   $("#landProfileView").addEventListener("click", () => openProfileDialog($("#landProfile").value));
   $("#landProfileNew").addEventListener("click", () => openProfileDialog($("#landProfile").value, true));
-  $("#loadJob").addEventListener("click", () => { $("#file").accept = ".sheetflat"; $("#file").click(); $("#file").accept = ".step,.stp,.sldasm,.sldprt,.sheetflat"; });
+  $("#loadJob").addEventListener("click", () => { $("#file").accept = ".sheetflat"; $("#file").click(); $("#file").accept = ".step,.stp,.sldasm,.sldprt,.dxf,.sheetflat"; });
   updateLandHint();
   const drop = $("#drop"), file = $("#file");
   drop.addEventListener("click", () => file.click());
@@ -90,6 +90,7 @@ function fillProfileSelects() {
     sel.innerHTML = d.profiles.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   }
   $("#landProfile").value = d.active;
+  syncProfileMenu();
 }
 function updateLandHint() {
   const p = S.profilesData.profiles.find((x) => x.id === $("#landProfile").value);
@@ -106,7 +107,7 @@ async function startUpload(file) {
   const isJob = /\.sheetflat$/i.test(file.name);
   const fd = new FormData();
   fd.append("file", file);
-  if (!isJob) { fd.append("material", chosenMaterial()); fd.append("profile", $("#landProfile").value); }
+  if (!isJob) { fd.append("material", chosenMaterial()); fd.append("profile", $("#landProfile").value); fd.append("split_fused", $("#splitFused").checked ? "1" : "0"); fd.append("dxf_thickness", $("#dxfT").value || "1.2"); }
   showBusy((isJob ? "กำลังเปิดไฟล์งาน " : "กำลังอัปโหลด ") + file.name);
   try {
     const r = await (await api(isJob ? "/api/load" : "/api/upload", { method: "POST", body: fd })).json();
@@ -120,7 +121,7 @@ async function startPath() {
   if (!p) return;
   showBusy("กำลังเปิดไฟล์");
   try {
-    const r = await sendJSON("/api/open-path", "POST", { path: p, material: chosenMaterial(), profile: $("#landProfile").value });
+    const r = await sendJSON("/api/open-path", "POST", { path: p, material: chosenMaterial(), profile: $("#landProfile").value, split_fused: $("#splitFused").checked, dxf_thickness: +$("#dxfT").value || 1.2 });
     await pollJob(r.id);
   } catch (e) { backToLanding(e.message); }
 }
@@ -156,7 +157,7 @@ function setProject(p) {
 function enterBench() {
   $("#busy").hidden = true; $("#landing").hidden = true; $("#bench").hidden = false;
   $("#topJob").hidden = false; $("#topActions").hidden = false;
-  fillProfileSelects(); $("#profileSel").value = S.project.settings.profile || S.profilesData.active;
+  fillProfileSelects(); $("#profileSel").value = S.project.settings.profile || S.profilesData.active; syncProfileMenu();
   const P = S.project;
   $("#jobName").textContent = P.source;
   if (!S.sel) { S.sel = { kind: "overview" }; S.sheetIdx = 0; }
@@ -324,8 +325,7 @@ function overviewInspector() {
     <dt>น้ำหนักเหล็กรวม</dt><dd>${fmt(kg, 2)} กก.</dd></dl></div>
   <div class="sec"><h3>โหมดค่ายืดที่ใช้</h3><dl class="kv"><dt>โหมด</dt><dd>${esc(prof.name)}</dd><dt>K-factor</dt><dd>${prof.k_factor}</dd>
     <dt>DXF ใส่ชิ้น</dt><dd>${P.settings.copies === "qty" ? "ตามจำนวนจริง" : "1 ชิ้นต่อแบบ"}</dd></dl></div>
-  <div class="sec"><div class="dl-btns"><button class="btn primary" data-dl="all">ดาวน์โหลด DXF ทั้งหมด + Excel (.zip)</button><button class="btn" data-dl="xlsx">ดาวน์โหลดใบสรุป Excel</button>
-    <button class="btn" data-act="price">คิดราคา</button><button class="btn" data-act="save">บันทึกงาน (.sheetflat)</button></div>
+  <div class="sec"><div class="dl-btns"><button class="btn primary" data-dl="all">ดาวน์โหลด DXF ทั้งหมด + Excel (.zip)</button></div>
   <p class="hint">คลิกแถวในใบสั่งตัดเพื่อดูแบบคลี่ของชิ้นนั้น คลิกชื่อความหนาเพื่อดูไฟล์ DXF ทั้งแผ่น · บันทึกงานแล้วส่งไฟล์ให้คนอื่นเปิดต่อได้ ผลเหมือนเดิมทุกอย่าง</p></div>`;
 }
 function renderOverview() {
@@ -568,15 +568,15 @@ function groupInspector(g) {
     <dt>พื้นที่คลี่รวม</dt><dd>${fmt(g.area / 1e6, 3)} ตร.ม.</dd>
     <dt>น้ำหนักเหล็กรวม</dt><dd>${fmt(g.weight_kg, 2)} กก.</dd></dl></div>
   ${g.sheets.length > 1 ? `<div class="sec"><h3>แผ่นเหล็ก</h3><div class="dl-btns">${g.sheets.map((s) => `<button class="btn small ${s.index === S.sheetIdx ? "primary" : ""}" data-sheet="${s.index}">แผ่น ${s.index + 1} · ${s.count} ชิ้น${s.oversize ? " (ใหญ่เกินแผ่น)" : ""}</button>`).join("")}</div></div>` : ""}
-  <div class="sec"><h3>การวางชิ้นในไฟล์</h3>
+  ${acc("layout", "การวางชิ้นในไฟล์", `${st.copies === "qty" ? "ตามจำนวนจริง" : "1 ชิ้นต่อแบบ"} · ${cur ? cur.replace("x", " × ") : "ไม่จำกัดแผ่น"}`)}
     <div class="row"><label for="sCopies">จำนวนที่ใส่ในไฟล์</label><select id="sCopies"><option value="qty" ${st.copies === "qty" ? "selected" : ""}>ตามจำนวนจริง</option><option value="one" ${st.copies === "one" ? "selected" : ""}>1 ชิ้นต่อแบบ</option></select></div>
     <div class="row"><label for="sSheet">ขนาดแผ่นเหล็ก</label><select id="sSheet">${sheetOpts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     <div class="row"><label for="sGap">ระยะห่างชิ้น (มม.)</label><input type="number" id="sGap" min="0" step="1" value="${st.gap}"></div>
-    <p class="hint">การวางนี้เป็นแค่ให้ชิ้นไม่ซ้อนกัน การจัดวางประหยัดเหล็ก (nesting) ทำต่อในโปรแกรมเครื่องเลเซอร์</p></div>
-  <div class="sec"><h3>เนื้อหาในไฟล์ DXF</h3>
+    <p class="hint">การวางนี้เป็นแค่ให้ชิ้นไม่ซ้อนกัน การจัดวางประหยัดเหล็ก (nesting) ทำต่อในโปรแกรมเครื่องเลเซอร์</p></details>
+  ${acc("dxf", "เนื้อหาในไฟล์ DXF", [st.bend_lines ? "เส้นพับ" : "", st.labels ? "ชื่อชิ้น" : ""].filter(Boolean).join(" + ") || "เส้นตัดอย่างเดียว")}
     <label class="switch"><input type="checkbox" id="sBend" ${st.bend_lines ? "checked" : ""}> ใส่เส้นพับ (เลเยอร์ BEND)</label>
     <label class="switch"><input type="checkbox" id="sLabel" ${st.labels ? "checked" : ""}> ใส่ชื่อชิ้น (เลเยอร์ LABEL)</label>
-    <p class="hint">เส้นตัดอยู่เลเยอร์ CUT หน่วยมิลลิเมตร ถ้าเครื่องเลเซอร์ตัดทุกเลเยอร์ ให้ปิดเส้นพับและชื่อชิ้น</p></div>
+    <p class="hint">เส้นตัดอยู่เลเยอร์ CUT หน่วยมิลลิเมตร ถ้าเครื่องเลเซอร์ตัดทุกเลเยอร์ ให้ปิดเส้นพับและชื่อชิ้น</p></details>
   <div class="sec"><div class="dl-btns">${g.sheets.map((s) => `<button class="btn primary" data-dl="dxf/${g.id}/${s.index}">ดาวน์โหลด ${esc(s.filename)}</button>`).join("")}</div></div>`;
 }
 function bindGroupInspector() {
@@ -614,32 +614,37 @@ function partInspector(p) {
       <label class="switch" style="margin-top:10px"><input type="checkbox" id="pFlip" ${p.flip ? "checked" : ""}> กลับด้านแผ่นคลี่ (กระจกซ้าย-ขวา)</label></div>`;
   }
   if (t.measured) {
-    h += `<div class="sec"><h3>วัสดุและความหนา</h3>
+    const matName = (P.materials.find((m) => m.id === p.material_id) || {}).name || p.material_id;
+    h += `${acc("mat", "วัสดุและความหนา", `${esc(matName)} · ${fmtG(t.used)} มม.`)}
       <div class="row"><label for="pMat">ชนิดเหล็ก</label><select id="pMat">${mats}</select></div>
       <dl class="kv"><dt>ความหนาที่วัดได้</dt><dd>${fmt(t.measured, 3)} มม.</dd>
       <dt>ความหนาที่ใช้คำนวณ</dt><dd>${fmtG(t.used)} มม.</dd>
       <dt>เบอร์ / ค่ายืด 90°</dt><dd>${t.matched ? `${esc(t.gauge)} / ${fmt(t.bd, 2)} มม.` : "ไม่อยู่ในตาราง"}</dd>
       <dt>ชื่อไฟล์กลุ่ม</dt><dd>${esc(p.code)}</dd></dl>
-      <div class="row"><label for="pT">ระบุความหนาเอง (มม.)</label><input type="number" id="pT" step="0.01" min="0" placeholder="${fmtG(t.used)}" value="${t.override ?? ""}"></div></div>`;
+      <div class="row"><label for="pT">ระบุความหนาเอง (มม.)</label><input type="number" id="pT" step="0.01" min="0" placeholder="${fmtG(t.used)}" value="${t.override ?? ""}"></div></details>`;
   }
   if (f) {
-    h += `<div class="sec"><h3>ตรวจสอบความถูกต้อง</h3>`;
+    const checks = [];
     const dev = c.volume_dev_pct;
     if (dev !== null && dev !== undefined) {
       const k = Math.abs(dev) <= 0.5 ? "ok" : Math.abs(dev) <= 1.5 ? "warn" : "bad";
-      h += chk(k, `พื้นที่คลี่ × ความหนา ตรงกับปริมาตรชิ้นงาน (${dev >= 0 ? "+" : ""}${fmt(dev, 3)}%)`, "คำนวณแยกอิสระด้วย K = 0.5 เทียบกับปริมาตรจากโมเดล 3D");
+      checks.push([k, `พื้นที่คลี่ × ความหนา ตรงกับปริมาตรชิ้นงาน (${dev >= 0 ? "+" : ""}${fmt(dev, 3)}%)`, "คำนวณแยกอิสระด้วย K = 0.5 เทียบกับปริมาตรจากโมเดล 3D"]);
     }
-    h += chk(c.closed ? "ok" : "bad", c.closed ? "เส้นตัดทุกเส้นปิดสนิท" : "มีเส้นตัดไม่ปิด");
-    h += chk((c.thickness_weight || 0) > 0.8 ? "ok" : "warn", `ความหนา ${fmt(t.measured, 3)} มม. ยืนยันจากผิวคู่ขนาน ${fmt((c.thickness_weight || 0) * 100, 0)}% ของพื้นที่ระนาบ`);
-    h += chk(t.matched ? "ok" : "warn", t.matched ? `ความหนาตรงกับตาราง (${esc(t.gauge)})` : "ความหนาไม่อยู่ในตารางค่ายืด ใช้ K-factor กับทุกรอยพับ");
-    h += `</div>`;
-    h += `<div class="sec"><h3>รอยพับ ${f.bends.length ? "(" + f.bends.length + " จุด)" : ""}</h3>`;
+    checks.push([c.closed ? "ok" : "bad", c.closed ? "เส้นตัดทุกเส้นปิดสนิท" : "มีเส้นตัดไม่ปิด"]);
+    checks.push([(c.thickness_weight || 0) > 0.8 ? "ok" : "warn", `ความหนา ${fmt(t.measured, 3)} มม. ยืนยันจากผิวคู่ขนาน ${fmt((c.thickness_weight || 0) * 100, 0)}% ของพื้นที่ระนาบ`]);
+    checks.push([t.matched ? "ok" : "warn", t.matched ? `ความหนาตรงกับตาราง (${esc(t.gauge)})` : "ความหนาไม่อยู่ในตารางค่ายืด ใช้ K-factor กับทุกรอยพับ"]);
+    const nBad = checks.filter((x) => x[0] === "bad").length, nWarn = checks.filter((x) => x[0] === "warn").length;
+    const cMeta = nBad ? `ไม่ผ่าน ${nBad} ข้อ` : nWarn ? `ควรดู ${nWarn} ข้อ` : `ผ่านทั้ง ${checks.length} ข้อ`;
+    h += acc("check", "ตรวจสอบความถูกต้อง", cMeta, nBad ? "bad" : nWarn ? "warn" : "", !!(nBad || nWarn));
+    h += checks.map((x) => chk(...x)).join("");
+    h += `</details>`;
+    h += acc("bends", "รอยพับ", f.bends.length ? `${f.bends.length} จุด` : "ไม่มี");
     if (f.bends.length) {
       h += `<table class="bt"><thead><tr><th>#</th><th class="n">มุมใน</th><th class="n">R ใน</th><th>วิธี</th><th class="n">BA</th></tr></thead><tbody>` +
         f.bends.map((b, i) => `<tr data-bend="${i}"><td>${i + 1}</td><td class="n">${fmt(b.angle_in, 1)}°</td><td class="n">${fmt(b.r, 2)}</td><td><span class="tag ${b.method === "table" ? "tbl" : ""}">${b.method === "table" ? "ตาราง BD " + fmt(b.bd, 2) : "K " + b.k}</span></td><td class="n">${fmt(b.ba, 2)}</td></tr>`).join("") +
         `</tbody></table><p class="hint">มุม = มุมด้านในหลังพับ วัดแบบเครื่องพับ (พับฉาก = 90°, พับทบ = 0°) · BA = ความกว้างแถบพับในแผ่นคลี่ · ชี้เมาส์ที่แถวเพื่อดูเส้นพับในแบบ</p>`;
     } else h += `<p class="insp-sub">ชิ้นนี้เป็นแผ่นเรียบ ไม่มีรอยพับ</p>`;
-    h += `</div>`;
+    h += `</details>`;
   }
   if (p.warnings.length) h += `<div class="sec"><h3>ข้อควรตรวจ</h3><ul class="warnlist">${p.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
   if (!f) h += `<div class="sec"><dl class="kv"><dt>ขนาด 3D</dt><dd>${p.bbox3.map((x) => fmt(x, 1)).join(" × ")} มม.</dd><dt>ปริมาตร</dt><dd>${fmt(p.volume, 0)} ลบ.มม.</dd></dl></div>`;
@@ -704,7 +709,7 @@ class Viewer {
   }
   colors() {
     const cs = getComputedStyle(document.documentElement), g = (n) => cs.getPropertyValue(n).trim();
-    this.c = { ink: g("--ink"), bend: g("--bend"), dim: g("--dim"), paper: g("--paper"), zinc: g("--zinc-100"), grid: g("--zinc-200"), fill: g("--zinc-200"), sel: g("--sel"), selBg: g("--sel-bg"), steel: g("--steel") };
+    this.c = { ink: g("--ink"), bend: g("--bend"), dim: g("--dim"), paper: g("--paper"), zinc: g("--zinc-100"), grid: g("--zinc-200"), fill: g("--part-fill"), sel: g("--sel"), selBg: g("--sel-fill"), steel: g("--steel") };
   }
   resize() {
     const r = this.cv.parentElement.getBoundingClientRect();
@@ -775,8 +780,8 @@ class Viewer {
     if (it && this.scene.mode === "group" && it.part_id && S.sel && (S.sel.kind !== "part" || S.sel.id !== it.part_id)) selectPart(it.part_id);
   }
   onKey(e) {
-    if (e.target.closest("input,select,textarea,dialog")) return;
-    const k = e.key.toLowerCase();
+    if (e.target.closest("input,select,textarea,dialog") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = keyOf(e);
     if (S.view3d && S.sel && S.sel.kind === "part") {
       if (k === "f" && v3) v3.fit(); else if (k === "d") $("#t3Dim").click(); else if (k === "a") $("#t3Ang").click();
       else if (k === "l") $("#t3Len").click(); else if (k === "h") $("#t3Hole").click();
@@ -845,7 +850,7 @@ class Viewer {
     for (const it of sc.items) {
       const path = new Path2D();
       for (const l of it.loops) { l.pts.forEach(([x, y], i) => { const [sx, sy] = this.w2s(x, y); i ? path.lineTo(sx, sy) : path.moveTo(sx, sy); }); path.closePath(); }
-      ctx.fillStyle = sc.mode === "group" && selPart && it.part_id === selPart ? c.selBg : c.paper;
+      ctx.fillStyle = sc.mode === "group" && selPart && it.part_id === selPart ? c.selBg : c.fill;
       ctx.fill(path, "evenodd");
     }
     // cut lines
@@ -999,7 +1004,7 @@ function setStatus(v) {
 function toggleOpt(k) {
   viewer.opts[k] = !viewer.opts[k];
   const id = { bend: "tBend", dim: "tDim", name: "tName", measure: "tMeasure" }[k];
-  $("#" + id).setAttribute("aria-pressed", viewer.opts[k]);
+  setOn($("#" + id), viewer.opts[k]);
   if (k === "measure") { viewer.measure = []; setStatus(viewer); }
   viewer.draw();
 }
@@ -1053,7 +1058,7 @@ let v3 = null;
 function colors3d() {
   const cs = getComputedStyle(document.documentElement), g = (n) => cs.getPropertyValue(n).trim();
   return { zinc: g("--zinc-100"), ink: g("--ink"), dim: g("--dim"), paper: g("--paper"), steel: g("--steel"),
-           steelFill: g("--zinc-300"), bend: g("--bend"), bendFill: g("--bend-fill"), font: g("--font") };
+           steelFill: g("--steel-fill"), bend: g("--bend"), bendFill: g("--bend-fill"), font: g("--font") };
 }
 async function ensure3d() {
   if (v3) return v3;
@@ -1068,12 +1073,13 @@ async function ensure3d() {
     $("#foldCtl").hidden = !!st.solid;
     if (st.solid) return;
     $("#t3Fold").textContent = st.folded ? "คลี่" : "พับ";
-    $("#t3Fold").title = st.folded ? "คลี่กลับเป็นแผ่นเรียบ" : "พับตามแบบทีละรอย (#1, #2, ...)";
+    $("#t3Fold").title = st.folded ? "คลี่กลับเป็นแผ่นเรียบ" : v3.pressOn ? "พับบนเครื่องพับตามลำดับพับ" : "พับตามลำดับพับทีละรอย";
     $("#t3Prog").value = st.n ? Math.round((st.T / st.n) * 1000) : 0;
     const sub = $("#stageTitle small");
     if (sub && S.sel && S.sel.kind === "part") {
       const p = part(S.sel.id);
-      const state = st.flat ? "3D แบบคลี่ (แผ่นเรียบ)" : st.folded ? "3D พับแล้ว" : st.current ? `กำลังพับ #${st.current.n}` : "3D พับบางส่วน";
+      const state = st.press ? `เครื่องพับ ขั้นที่ ${st.press.k + 1}/${st.press.total} · รอย #${st.current.n}`
+        : st.flat ? "3D แบบคลี่ (แผ่นเรียบ)" : st.folded ? "3D พับแล้ว" : st.current ? `กำลังพับ #${st.current.n}` : "3D พับบางส่วน";
       sub.textContent = `${state} · ${st.n} รอยพับ · หนา ${fmt(p.thickness.used, 2)} มม.`;
     }
   });
@@ -1127,7 +1133,8 @@ function shiftItem(it, dx) {
    Profile (bend table) editor
    ====================================================================== */
 let editing = null;
-function openProfileDialog(curId, makeNew) {
+async function openProfileDialog(curId, makeNew) {
+  try { S.profilesData = await getJSON("/api/profiles"); } catch (_) { /* keep what we have */ }   // picks up edits made in Excel
   editing = JSON.parse(JSON.stringify(S.profilesData));
   editing.cur = (typeof curId === "string" && curId) || $("#profileSel").value || editing.active;
   if (makeNew) {
@@ -1146,7 +1153,13 @@ function renderProfileDialog() {
   d.cur = p.id;
   const matOpts = (sel) => `<option value="" ${!sel ? "selected" : ""}>ทุกชนิด</option>` +
     d.materials.map((m) => `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.id)}</option>`).join("");
+  const bf = d.bend_file;
   $("#profileBody").innerHTML = `
+    ${bf && !DEMO ? `<div class="bendfile"><p class="hint" style="margin:0 0 6px">ตารางค่ายืดเก็บเป็นไฟล์ Excel (1 ชีต = 1 โหมด) โปรแกรมอ่านค่าจากไฟล์นี้ทุกครั้งที่คำนวณ จึงแก้ใน Excel แล้วส่งต่อให้คนอื่นใช้ได้เลย<br>ไฟล์: <code>${esc(bf.path)}</code></p>
+      ${bf.error ? `<p class="hint" style="color:var(--bad,#c0392b)">อ่านไฟล์ Excel ไม่ได้ ใช้ค่าล่าสุดที่อ่านได้ไปก่อน: ${esc(bf.error)}</p>` : ""}
+      <div class="row"><a class="btn small" href="/api/profiles/xlsx" download>ดาวน์โหลดไฟล์ Excel ค่ายืด</a>
+        <button type="button" class="btn small" id="pfImport">นำเข้าจากไฟล์ Excel</button>
+        <input type="file" id="pfImportFile" accept=".xlsx" hidden></div></div>` : ""}
     <div class="row"><label for="pfSel">โหมด</label>
       <select id="pfSel" style="max-width:none;flex:1">${d.profiles.map((x) => `<option value="${esc(x.id)}" ${x.id === p.id ? "selected" : ""}>${esc(x.name)}${x.id === d.fresh ? " (ใหม่)" : ""}</option>`).join("")}</select>
       <button type="button" class="btn small" id="pfDup">สร้างโหมดใหม่จากโหมดนี้</button>
@@ -1174,6 +1187,10 @@ function renderProfileDialog() {
       <label class="switch" style="align-self:end"><input type="checkbox" id="pfJog" ${p.jog_use_k ? "checked" : ""}> รอยพับสลับทิศติดกัน (jog) ใช้ K-factor</label>
       <label class="switch" style="grid-column:1/3"><input type="checkbox" id="pfSimp" ${p.simplify_bends !== false ? "checked" : ""}> เส้นตัดโค้งที่พาดผ่านรอยพับ ทำเป็นเส้นตรง (เหมือน Simplify bends ของ SolidWorks)</label></div></details>`;
   const body = $("#profileBody");
+  if ($("#pfImport")) {
+    $("#pfImport").onclick = () => $("#pfImportFile").click();
+    $("#pfImportFile").onchange = importBendXlsx;
+  }
   $("#pfSel").onchange = (e) => { syncProfile(); d.cur = e.target.value; renderProfileDialog(); };
   $("#pfAdd").onclick = () => { syncProfile(); p.table.push({ gauge: "", thickness: 0, bd: 0, material: "" }); renderProfileDialog(); const ins = $("#pfRows").querySelectorAll("tr:last-child input"); if (ins[0]) ins[0].focus(); };
   $("#pfDup").onclick = () => { syncProfile(); const n = JSON.parse(JSON.stringify(p)); n.id = "m" + Date.now().toString(36); n.name = p.name + " (สำเนา)"; d.profiles.push(n); d.cur = n.id; renderProfileDialog(); };
@@ -1181,6 +1198,20 @@ function renderProfileDialog() {
   $("#pfMatAdd").onclick = () => { syncProfile(); d.materials.push({ id: "", name: "", prefix: "" }); renderProfileDialog(); const ins = $("#pfMats").querySelectorAll("tr:last-child input"); if (ins[0]) ins[0].focus(); };
   body.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { syncProfile(); p.table.splice(+b.dataset.rm, 1); renderProfileDialog(); }));
   body.querySelectorAll("[data-mrm]").forEach((b) => (b.onclick = () => { syncProfile(); d.materials.splice(+b.dataset.mrm, 1); renderProfileDialog(); }));
+}
+async function importBendXlsx(ev) {
+  const f = ev.target.files[0]; ev.target.value = ""; if (!f) return;
+  try {
+    const fd = new FormData(); fd.append("file", f);
+    S.profilesData = await (await api("/api/profiles/xlsx", { method: "POST", body: fd })).json();
+    const keep = editing.cur;
+    editing = JSON.parse(JSON.stringify(S.profilesData));
+    editing.cur = editing.profiles.some((x) => x.id === keep) ? keep : editing.active;
+    fillProfileSelects(); updateLandHint();
+    if (S.jobId) { await patchSettings({ profile: S.profilesData.active }); $("#profileSel").value = S.profilesData.active; syncProfileMenu(); }
+    renderProfileDialog();
+    $("#profileMsg").textContent = `นำเข้า ${S.profilesData.profiles.length} โหมดจาก Excel แล้ว`;
+  } catch (e) { $("#profileMsg").textContent = e.message; }
 }
 function syncProfile() {
   const d = editing, p = d.profiles.find((x) => x.id === d.cur); if (!p) return;
@@ -1206,7 +1237,7 @@ async function saveProfiles(ev) {
       const box = $("#matRadios"), cur = chosenMaterial(); box.innerHTML = "";
       S.profilesData.materials.forEach((m, i) => box.insertAdjacentHTML("beforeend", `<label class="radio"><input type="radio" name="mat" value="${esc(m.id)}" ${(m.id === cur || (i === 0 && !S.profilesData.materials.some((x) => x.id === cur))) ? "checked" : ""}><span>${esc(m.name)}</span></label>`));
     }
-    if (S.jobId) { await patchSettings({ profile: S.profilesData.active }); $("#profileSel").value = S.profilesData.active; }
+    if (S.jobId) { await patchSettings({ profile: S.profilesData.active }); $("#profileSel").value = S.profilesData.active; syncProfileMenu(); }
     toast(S.jobId ? "บันทึกตารางค่ายืดแล้ว คำนวณแผ่นคลี่ใหม่ทั้งหมด" : "บันทึกโหมดค่ายืดไว้ในเครื่องนี้แล้ว");
   } catch (e) { $("#profileMsg").textContent = e.message; }
 }
@@ -1376,22 +1407,250 @@ const THEMES = [["auto", "อัตโนมัติ"], ["light", "สว่า
 function applyTheme(t) {
   const root = document.documentElement;
   if (t === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
-  $("#themeLabel").textContent = THEMES.find((x) => x[0] === t)[1];
-  $("#btnTheme").setAttribute("aria-label", "สีหน้าจอ: " + THEMES.find((x) => x[0] === t)[1] + " (กดเพื่อเปลี่ยน)");
+  document.querySelectorAll("[data-theme-pick]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.themePick === t)));
   if (viewer) { viewer.colors(); viewer.draw(); }
   if (v3) v3.setColors(colors3d());
+}
+function pickTheme(t) {
+  try { localStorage.setItem("sf-theme", t); } catch (_) { /* ignore */ }
+  applyTheme(t);
 }
 function initTheme() {
   let t = "auto";
   try { t = localStorage.getItem("sf-theme") || "auto"; } catch (_) { /* private mode */ }
   if (!THEMES.some((x) => x[0] === t)) t = "auto";
   applyTheme(t);
-  $("#btnTheme").onclick = () => {
-    const cur = document.documentElement.getAttribute("data-theme") || "auto";
-    const next = THEMES[(THEMES.findIndex((x) => x[0] === cur) + 1) % THEMES.length][0];
-    try { localStorage.setItem("sf-theme", next); } catch (_) { /* ignore */ }
-    applyTheme(next);
-  };
+  document.querySelectorAll("[data-theme-pick]").forEach((b) => (b.onclick = () => pickTheme(b.dataset.themePick)));
+}
+
+/* ======================================================================
+   menus, shortcuts, command palette
+   ====================================================================== */
+function setOn(el, on) {
+  if (el) el.setAttribute(el.getAttribute("role") === "menuitemcheckbox" ? "aria-checked" : "aria-pressed", String(!!on));
+}
+/* the key that was pressed, by its place on the keyboard: shortcuts work with the Thai layout too */
+function keyOf(e) {
+  if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
+  if (/^Digit\d$/.test(e.code)) return e.code.slice(5);
+  return e.key.length === 1 ? e.key.toLowerCase() : e.key;
+}
+const menuItems = (pop) => [...pop.querySelectorAll('[role^="menuitem"]')].filter((x) => !x.disabled && x.offsetParent !== null);
+function closeMenus(except) {
+  document.querySelectorAll("[data-menu]").forEach((m) => {
+    if (m === except) return;
+    const pop = m.querySelector(".menu-pop");
+    if (!pop.hidden) { pop.hidden = true; m.querySelector(".menu-btn").setAttribute("aria-expanded", "false"); }
+  });
+}
+function openMenu(m, focusFirst) {
+  closeMenus(m);
+  if (m.dataset.menu === "profile") buildProfileItems();
+  const pop = m.querySelector(".menu-pop");
+  pop.style.left = pop.style.right = "";
+  pop.hidden = false;
+  m.querySelector(".menu-btn").setAttribute("aria-expanded", "true");
+  const r = pop.getBoundingClientRect();
+  if (r.right > window.innerWidth - 8) { pop.style.left = "auto"; pop.style.right = "0"; }
+  else if (r.left < 8) { pop.style.left = "0"; pop.style.right = "auto"; }
+  if (focusFirst) { const it = menuItems(pop)[0]; if (it) it.focus(); }
+}
+function initMenus() {
+  document.querySelectorAll("[data-menu]").forEach((m) => {
+    const btn = m.querySelector(".menu-btn"), pop = m.querySelector(".menu-pop");
+    btn.setAttribute("aria-haspopup", "menu"); btn.setAttribute("aria-expanded", "false");
+    btn.addEventListener("click", (e) => { e.stopPropagation(); if (pop.hidden) openMenu(m, e.detail === 0); else closeMenus(); });
+    btn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { e.preventDefault(); openMenu(m, true); } });
+    pop.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const it = e.target.closest('[role^="menuitem"]');
+      if (!it || it.disabled) return;
+      if (it.getAttribute("role") !== "menuitemcheckbox") { closeMenus(); btn.focus({ preventScroll: true }); }
+    });
+    pop.addEventListener("keydown", (e) => {
+      const list = menuItems(pop), i = list.indexOf(document.activeElement);
+      if (e.key === "ArrowDown") { e.preventDefault(); list[(i + 1) % list.length].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); list[(i - 1 + list.length) % list.length].focus(); }
+      else if (e.key === "Home") { e.preventDefault(); list[0].focus(); }
+      else if (e.key === "End") { e.preventDefault(); list[list.length - 1].focus(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeMenus(); btn.focus(); }
+      else if (e.key === "Tab") closeMenus();
+    });
+  });
+  document.addEventListener("click", () => closeMenus());
+}
+function buildProfileItems() {
+  const sel = $("#profileSel"), box = $("#profileItems");
+  box.innerHTML = [...sel.options].map((o) => `<button type="button" role="menuitemradio" aria-checked="${o.value === sel.value}" data-prof="${esc(o.value)}"><span>${esc(o.textContent)}</span></button>`).join("");
+  box.querySelectorAll("[data-prof]").forEach((b) => (b.onclick = () => {
+    if (sel.value !== b.dataset.prof) { sel.value = b.dataset.prof; sel.dispatchEvent(new Event("change")); }
+    syncProfileMenu();
+  }));
+}
+function syncProfileMenu() {
+  const sel = $("#profileSel"), o = sel.options[sel.selectedIndex];
+  $("#profileName").textContent = o ? o.textContent : "–";
+}
+function newJob() {
+  S.jobId = null; S.project = null; S.sel = null; S.cache.clear(); S.meshCache.clear(); S.editGroups = false; S.picked.clear(); S.price = null;
+  $("#topJob").hidden = true; $("#topActions").hidden = true; $("#file").value = ""; backToLanding("");
+}
+function exportPricing() {
+  if (!S.project) return;
+  if (S.price) priceXlsx();
+  else if (DEMO) download("pricing");
+  else { location.href = `/api/jobs/${S.jobId}/export/pricing`; toast("กำลังดาวน์โหลดใบคิดราคา (Excel)"); }
+}
+/* previous / next part in the order of the list on the left */
+function stepPart(dir) {
+  const ids = [...new Set([...document.querySelectorAll("#rail [data-part]")].map((el) => el.dataset.part))];
+  if (!ids.length) return;
+  const i = S.sel && S.sel.kind === "part" ? ids.indexOf(S.sel.id) : -1;
+  const next = ids[(i + dir + ids.length) % ids.length] ?? ids[0];
+  selectPart(next);
+  const el = document.querySelector(`#rail [data-part="${CSS.escape(next)}"]`);
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+const onPart = () => S.project && S.sel && S.sel.kind === "part";
+const in3d = () => onPart() && S.view3d && v3;
+
+const KEYS = [
+  ["ทั่วไป", [
+    ["ค้นหาคำสั่งหรือชิ้นส่วน", ["Ctrl", "K"]], ["คีย์ลัดทั้งหมด", ["?"]], ["เปิดไฟล์ใหม่", ["Ctrl", "O"]], ["บันทึกงาน", ["Ctrl", "S"]],
+    ["ดาวน์โหลด DXF ทั้งหมด + Excel", ["Ctrl", "E"]], ["คิดราคา", ["P"]], ["ใบสั่งตัด (ภาพรวม)", ["O"]], ["ชิ้นก่อนหน้า / ถัดไป", ["[", "]"]],
+  ]],
+  ["ดูชิ้นงาน", [["สลับ 2D / 3D", ["V"]], ["ดูทั้งหมด", ["F"]]]],
+  ["แบบคลี่ 2D", [["เส้นพับ", ["B"]], ["ขนาด", ["D"]], ["ชื่อชิ้น", ["N"]], ["วัดระยะ", ["M"]], ["ยกเลิกการวัด", ["Esc"]]]],
+  ["3D", [["พับ / คลี่", ["Space"]], ["จำลองเครื่องพับ เปิด/ปิด", ["G"]], ["ขนาดรวม", ["D"]], ["มุมพับ", ["A"]], ["ความยาวขอบ", ["L"]],
+    ["รูและรัศมีโค้ง", ["H"]], ["มุมเอียง / หน้า / บน / ข้าง", ["1", "2", "3", "4"]]]],
+];
+function openKeys() {
+  $("#keysBody").innerHTML = KEYS.map(([h, rows]) => `<h3>${esc(h)}</h3>` + rows.map(([t, ks]) =>
+    `<div class="kr"><span>${esc(t)}</span><span>${ks.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span></div>`).join("")).join("");
+  closeMenus();
+  $("#keysDlg").showModal();
+}
+
+/* command palette: every command and every part, found by typing */
+function paletteItems() {
+  const P = S.project, A = [];
+  const act = (t, run, k, sub, ok = true) => { if (ok) A.push({ sec: "คำสั่ง", t, run, k, sub }); };
+  if (P) {
+    act("ดาวน์โหลด DXF ทั้งหมด + Excel", () => download("all"), "Ctrl E", "ไฟล์ .zip พร้อมส่งเครื่องเลเซอร์", P.groups.length > 0);
+    act("ดาวน์โหลดใบสรุปงาน (Excel)", () => download("xlsx"));
+    act("ดาวน์โหลดใบคิดราคา (Excel)", exportPricing);
+    act("ดาวน์โหลด STEP แยกชิ้น (.zip)", () => $("#btnSteps").click());
+    act("คิดราคา", openPricing, "P");
+    act("บันทึกงาน (.sheetflat)", saveJob, "Ctrl S");
+    act("ใบสั่งตัด (ภาพรวม)", () => $("#ovLink").click(), "O");
+    act("สลับ 2D / 3D", () => setView3d(!S.view3d), "V", "", onPart());
+    act("พับ / คลี่", () => $("#t3Fold").click(), "Space", "ชิ้นงาน 3D", in3d());
+    act("จำลองเครื่องพับ เปิด/ปิด", () => $("#t3Press").click(), "G", "", in3d());
+    act("เปิดไฟล์ใหม่", newJob, "Ctrl O");
+  } else act("เปิดไฟล์ STEP", () => $("#file").click(), "Ctrl O");
+  act("แก้ตารางค่ายืด", openProfileDialog);
+  for (const [v, l] of THEMES) act(`สีหน้าจอ: ${l}`, () => pickTheme(v));
+  act("คีย์ลัดทั้งหมด", openKeys, "?");
+  if (P) {
+    for (const g of P.groups) A.push({ sec: "ไฟล์ DXF", t: g.name || g.code, sub: `${g.filename} · ${g.pieces} ชิ้น`, run: () => selectGroup(g.id) });
+    for (const p of P.parts) A.push({ sec: "ชิ้นส่วน", t: p.name, sub: `${p.code || ""}${p.flat ? ` · ${fmt(p.flat.w, 0)} × ${fmt(p.flat.h, 0)} มม.` : " · ไม่นำไปตัด"} · ${p.qty} ชิ้น`, run: () => selectPart(p.id) });
+  }
+  return A;
+}
+const PAL = { items: [], shown: [], i: 0 };
+function openPalette() {
+  closeMenus();
+  PAL.items = paletteItems();
+  $("#palInput").value = "";
+  renderPalette();
+  $("#palette").showModal();
+  $("#palInput").focus();
+}
+function renderPalette() {
+  const q = $("#palInput").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (x) => q.every((w) => `${x.t} ${x.sub || ""} ${x.sec}`.toLowerCase().includes(w));
+  const bySec = {};
+  for (const x of PAL.items) if (hit(x)) (bySec[x.sec] = bySec[x.sec] || []).push(x);
+  PAL.shown = [];
+  let html = "";
+  for (const sec of ["คำสั่ง", "ไฟล์ DXF", "ชิ้นส่วน"]) {
+    // names that start with what was typed come first
+    const rank = (x) => { const t = x.t.toLowerCase(), w = q.join(" "); return !w ? 0 : t === w ? 0 : t.startsWith(w) ? 1 : 2; };
+    const list = (bySec[sec] || []).map((x, i) => [rank(x), i, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((r) => r[2])
+      .slice(0, q.length ? 30 : sec === "ชิ้นส่วน" ? 8 : 12);
+    if (!list.length) continue;
+    html += `<li class="pal-sec" role="presentation">${sec}</li>`;
+    for (const x of list) {
+      const i = PAL.shown.push(x) - 1;
+      html += `<li role="option" id="pal${i}" data-i="${i}" aria-selected="false"><span>${esc(x.t)}</span>${x.sub ? `<small>${esc(x.sub)}</small>` : ""}<span class="pal-kind">${x.k ? `<kbd>${esc(x.k)}</kbd>` : ""}</span></li>`;
+    }
+  }
+  $("#palList").innerHTML = html || `<li class="pal-empty" role="presentation">ไม่พบ ลองพิมพ์คำอื่น</li>`;
+  PAL.i = 0; markPalette();
+}
+function markPalette() {
+  $("#palList").querySelectorAll("[data-i]").forEach((li) => li.setAttribute("aria-selected", String(+li.dataset.i === PAL.i)));
+  const cur = $("#pal" + PAL.i);
+  $("#palInput").setAttribute("aria-activedescendant", cur ? cur.id : "");
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+function runPalette(i) {
+  const x = PAL.shown[i];
+  if (!x) return;
+  $("#palette").close();
+  x.run();
+}
+function initPalette() {
+  $("#palInput").addEventListener("input", renderPalette);
+  $("#palInput").addEventListener("keydown", (e) => {
+    const n = PAL.shown.length;
+    if (e.key === "ArrowDown") { e.preventDefault(); if (n) { PAL.i = (PAL.i + 1) % n; markPalette(); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (n) { PAL.i = (PAL.i - 1 + n) % n; markPalette(); } }
+    else if (e.key === "Enter") { e.preventDefault(); runPalette(PAL.i); }
+  });
+  $("#palList").addEventListener("mousemove", (e) => { const li = e.target.closest("[data-i]"); if (li && +li.dataset.i !== PAL.i) { PAL.i = +li.dataset.i; markPalette(); } });
+  $("#palList").addEventListener("click", (e) => { const li = e.target.closest("[data-i]"); if (li) runPalette(+li.dataset.i); });
+  $("#palette").addEventListener("click", (e) => { if (e.target === $("#palette")) $("#palette").close(); });
+}
+function initShortcuts() {
+  window.addEventListener("keydown", (e) => {
+    const mod = e.ctrlKey || e.metaKey, k = keyOf(e);
+    if (mod && k === "k") { e.preventDefault(); if ($("#palette").open) $("#palette").close(); else openPalette(); return; }
+    if (document.querySelector("dialog[open]")) return;
+    if (mod && !e.altKey) {
+      if (k === "s" && S.project) { e.preventDefault(); saveJob(); }
+      else if (k === "o") { e.preventDefault(); if (S.project) newJob(); else $("#file").click(); }
+      else if (k === "e" && S.project && S.project.groups.length) { e.preventDefault(); download("all"); }
+      return;
+    }
+    if (e.altKey || e.target.closest("input,select,textarea,[contenteditable]")) return;
+    if (e.key === "?" || (e.code === "Slash" && e.shiftKey)) { e.preventDefault(); openKeys(); return; }
+    if (!S.project || $("#bench").hidden) return;
+    if (k === "p") { e.preventDefault(); openPricing(); }
+    else if (k === "o") $("#ovLink").click();
+    else if (e.code === "BracketLeft" || e.code === "BracketRight") { e.preventDefault(); stepPart(e.code === "BracketRight" ? 1 : -1); }
+    else if (onPart() && k === "v") setView3d(!S.view3d);
+    else if (in3d()) {
+      if (e.code === "Space" && !e.target.closest("button")) { e.preventDefault(); $("#t3Fold").click(); }
+      else if (k === "g") $("#t3Press").click();
+      else if ("1234".includes(k) && k.length === 1) v3.view(["iso", "front", "top", "right"][+k - 1]);
+    }
+  });
+}
+
+/* inspector sections that fold away; which ones are open is remembered */
+function acc(key, title, meta, cls = "", forceOpen = false) {
+  const open = forceOpen || S.acc.has(key);
+  return `<details class="sec acc" data-acc="${key}" ${open ? "open" : ""}><summary><h3>${esc(title)}</h3><span class="acc-meta ${cls}">${meta}</span></summary>`;
+}
+function initAcc() {
+  try { S.acc = new Set(JSON.parse(localStorage.getItem("sf-acc") || "[]")); } catch (_) { S.acc = new Set(); }
+  $("#inspector").addEventListener("toggle", (e) => {
+    const d = e.target;
+    if (!d.matches || !d.matches("details.acc")) return;
+    if (d.open) S.acc.add(d.dataset.acc); else S.acc.delete(d.dataset.acc);
+    try { localStorage.setItem("sf-acc", JSON.stringify([...S.acc])); } catch (_) { /* ignore */ }
+  }, true);
 }
 
 /* ======================================================================
@@ -1399,7 +1658,9 @@ function initTheme() {
    ====================================================================== */
 window.addEventListener("DOMContentLoaded", async () => {
   viewer = new Viewer($("#cv"));
-  initTheme();
+  initTheme(); initMenus(); initPalette(); initShortcuts(); initAcc();
+  $("#btnKeys").onclick = openKeys; $("#stKeys").onclick = openKeys; $("#btnPalette").onclick = openPalette;
+  $("#btnPriceXlsx").onclick = exportPricing;
   $("#btnSave").onclick = saveJob;
   $("#btnPrice").onclick = openPricing;
   $("#priceXlsx").onclick = priceXlsx;
@@ -1409,17 +1670,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#v2d").onclick = () => setView3d(false);
   $("#v3d").onclick = () => setView3d(true);
   $("#t3Fit").onclick = () => v3 && v3.fit();
-  const tog3 = (id, key) => { $(id).onclick = () => { if (!v3) return; const on = !v3.show[key]; v3.setShow(key, on); $(id).setAttribute("aria-pressed", String(on)); }; };
+  const tog3 = (id, key) => { $(id).onclick = () => { if (!v3) return; const on = !v3.show[key]; v3.setShow(key, on); setOn($(id), on); }; };
   tog3("#t3Dim", "size"); tog3("#t3Ang", "angle"); tog3("#t3Len", "len"); tog3("#t3Hole", "hole");
   $("#t3Fold").onclick = () => { if (!v3 || !v3.F) return; if (v3.F.T >= v3.F.n - 1e-9) v3.unfold(); else v3.fold(); };
   $("#t3Prog").addEventListener("input", (e) => v3 && v3.scrub(+e.target.value / 1000));
+  $("#t3Press").onclick = () => { if (!v3) return; const on = !v3.pressOn; v3.setPress(on); setOn($("#t3Press"), on); };
   document.querySelectorAll("[data-view3]").forEach((b) => (b.onclick = () => v3 && v3.view(b.dataset.view3)));
   $("#tBend").onclick = () => toggleOpt("bend"); $("#tDim").onclick = () => toggleOpt("dim");
   $("#tName").onclick = () => toggleOpt("name"); $("#tMeasure").onclick = () => toggleOpt("measure");
   $("#btnAll").onclick = () => download("all");
   $("#btnXlsx").onclick = () => download("xlsx");
+  $("#btnSteps").onclick = () => (DEMO ? toast(DEMO_MSG) : download("steps"));
   $("#btnProfile").onclick = openProfileDialog;
-  $("#btnNew").onclick = () => { S.jobId = null; S.project = null; S.sel = null; S.cache.clear(); S.meshCache.clear(); S.editGroups = false; S.picked.clear(); S.price = null; $("#topJob").hidden = true; $("#topActions").hidden = true; $("#file").value = ""; backToLanding(""); };
+  $("#btnNew").onclick = newJob;
   $("#profileForm").addEventListener("submit", (e) => { if (e.submitter && e.submitter.id === "profileSave") saveProfiles(e); });
   $("#profileSel").addEventListener("change", (e) => patchSettings({ profile: e.target.value }));
   if (DEMO) {

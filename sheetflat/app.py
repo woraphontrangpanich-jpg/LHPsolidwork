@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import tempfile
 import threading
 import traceback
 import zipfile
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from .core.dxf_export import build_dxf, dxf_bytes
 from .core.profiles import ProfileStore
 from .core.project import Project
+from .core.dxf_import import DxfReadError
 from .core.step_reader import StepReadError
 from .core.sw_convert import SolidWorksUnavailable, convert_to_step, solidworks_available
 from .core.xlsx_export import build_xlsx
@@ -124,12 +126,15 @@ def _run(pr: Project, path: Path, tmpdir: Path | None, state: dict | None = None
             step = convert_to_step(path, out_dir / (path.stem + "_converted.step"))
             pr.source_path = "" if CLOUD else str(step)
             pr.load_step(str(step), state)
+        elif suffix == ".dxf":
+            pr.source_path = "" if CLOUD else str(path)
+            pr.load_dxf(str(path), state)
         else:
             pr.source_path = "" if CLOUD else str(path)
             pr.load_step(str(path), state)
         if CLOUD and tmpdir is not None:
             shutil.rmtree(tmpdir, ignore_errors=True)       # do not keep customer files on the server
-    except (StepReadError, SolidWorksUnavailable) as ex:
+    except (StepReadError, SolidWorksUnavailable, DxfReadError) as ex:
         pr.error = str(ex)
         pr.progress.update(state="error", msg=str(ex))
     except Exception as ex:   # noqa
@@ -142,8 +147,8 @@ def _run(pr: Project, path: Path, tmpdir: Path | None, state: dict | None = None
 
 
 def _start(path: Path, source_name: str, material: str, profile: str | None, tmpdir: Path | None = None,
-           state: dict | None = None, job_name: str | None = None) -> Project:
-    settings = {"material": material, "profile": profile or store.data["active"]}
+           state: dict | None = None, job_name: str | None = None, extra: dict | None = None) -> Project:
+    settings = {"material": material, "profile": profile or store.data["active"], **(extra or {})}
     if state:
         settings.update({k: v for k, v in (state.get("settings") or {}).items() if k != "profile"})
     pr = Project(store, job_name or Path(source_name).stem, source_name, settings)
@@ -181,17 +186,26 @@ async def _receive(file: UploadFile, exts: tuple) -> tuple[Path, Path, str]:
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profile: str = Form("")):
+async def upload(file: UploadFile = File(...), material: str = Form("ZN"), profile: str = Form(""),
+                 split_fused: str = Form("1"), dxf_thickness: str = Form("")):
     name = Path(file.filename or "model.step").name
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in ("step", "stp", "sldasm", "sldprt"):
-        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt")
+    if ext not in ("step", "stp", "sldasm", "sldprt", "dxf"):
+        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt / .dxf")
     if ext in ("sldasm", "sldprt") and not solidworks_available():
         raise HTTPException(
             400, "ไฟล์ SolidWorks (.sldasm) อ่านได้เฉพาะเครื่องที่ติดตั้ง SolidWorks - "
                  "กรุณา Save As เป็น .step แล้วอัปโหลดไฟล์ STEP (รอยพับ/ความหนาอ่านจากไฟล์ STEP ได้ครบ)")
-    tmp, path, name = await _receive(file, ("step", "stp", "sldasm", "sldprt"))
-    pr = _start(path, name, material, profile, tmpdir=tmp)
+    tmp, path, name = await _receive(file, ("step", "stp", "sldasm", "sldprt", "dxf"))
+    try:
+        dxf_t = float(dxf_thickness) if dxf_thickness else 1.2
+    except ValueError:
+        dxf_t = 1.2
+    if not 0.05 <= dxf_t <= 50:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(400, "ความหนาของไฟล์ DXF ต้องอยู่ระหว่าง 0.05 ถึง 50 มม.")
+    pr = _start(path, name, material, profile, tmpdir=tmp,
+                extra={"split_fused": split_fused not in ("0", "false", ""), "dxf_thickness": dxf_t})
     return {"id": pr.id}
 
 
@@ -288,9 +302,14 @@ async def open_path(body: dict):
     p = Path(str(body.get("path", "")).strip().strip('"'))
     if not p.is_file():
         raise HTTPException(400, "ไม่พบไฟล์ตามพาธที่ระบุ")
-    if p.suffix.lower() not in (".step", ".stp", ".sldasm", ".sldprt"):
-        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt")
-    pr = _start(p, p.name, body.get("material", "ZN"), body.get("profile"))
+    if p.suffix.lower() not in (".step", ".stp", ".sldasm", ".sldprt", ".dxf"):
+        raise HTTPException(400, "รองรับเฉพาะไฟล์ .step / .stp / .sldasm / .sldprt / .dxf")
+    try:
+        dxf_t = float(body.get("dxf_thickness") or 1.2)
+    except (TypeError, ValueError):
+        dxf_t = 1.2
+    pr = _start(p, p.name, body.get("material", "ZN"), body.get("profile"),
+                extra={"split_fused": bool(body.get("split_fused", True)), "dxf_thickness": min(50.0, max(0.05, dxf_t))})
     return {"id": pr.id}
 
 
@@ -476,23 +495,74 @@ def group_layout(jid: str, gid: str, idx: int):
 
 
 # ------------------------------------------------------------------ profiles
+def _profiles_payload() -> dict:
+    return {**store.data, "bend_file": {"name": store.bend_path.name, "path": str(store.bend_path),
+                                        "error": store.bend_error}}
+
+
+def _recompute_jobs():
+    for pr in jobs.values():           # table edits take effect on open jobs
+        try:
+            pr.recompute()
+        except Exception:   # noqa
+            traceback.print_exc()
+
+
 @app.get("/api/profiles")
 def get_profiles():
-    return store.data
+    if store.refresh():                # the Excel workbook was edited outside the program
+        _recompute_jobs()
+    return _profiles_payload()
 
 
 @app.put("/api/profiles")
 def put_profiles(body: dict):
     try:
         store.replace(body)
+    except PermissionError:
+        raise HTTPException(409, f"เขียนไฟล์ {store.bend_path.name} ไม่ได้ ปิดไฟล์ใน Excel ก่อนแล้วบันทึกใหม่")
     except (ValueError, KeyError) as ex:
         raise HTTPException(400, f"ข้อมูลโหมดค่ายืดไม่ถูกต้อง: {ex}")
-    for pr in jobs.values():           # profile edits take effect on open jobs
+    _recompute_jobs()
+    return _profiles_payload()
+
+
+@app.get("/api/profiles/xlsx")
+def download_bend_xlsx():
+    """The bend-table workbook: one sheet per mode. Edit it in Excel and upload it back (or save it over data/bend_tables.xlsx)."""
+    store.refresh()
+    return _attach(store.bend_path.read_bytes(), store.bend_path.name,
+                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.post("/api/profiles/xlsx")
+async def upload_bend_xlsx(file: UploadFile = File(...)):
+    """Replace the bend tables with a workbook (one sheet = one mode). Checked before it is accepted."""
+    raw = await file.read(5 * 1024 * 1024 + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(413, "ไฟล์ใหญ่เกินไป")
+    tmpdir = Path(tempfile.mkdtemp(prefix="bend_", dir=DATA))
+    try:
+        tmp = tmpdir / "bend_tables.xlsx"
+        tmp.write_bytes(raw)
+        from .core.bend_xlsx import read_profiles
+        from .core.profiles import _validate_profile
         try:
-            pr.recompute()
-        except Exception:   # noqa
-            traceback.print_exc()
-    return store.data
+            profs = read_profiles(tmp)
+            for p in profs:
+                _validate_profile(p)
+        except (ValueError, KeyError) as ex:
+            raise HTTPException(400, f"ไฟล์ค่ายืดไม่ถูกต้อง: {ex}")
+        try:
+            tmp.replace(store.bend_path)
+        except PermissionError:
+            raise HTTPException(409, f"เขียนทับ {store.bend_path.name} ไม่ได้ ปิดไฟล์ใน Excel ก่อน")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    store._read_workbook()
+    store.save()
+    _recompute_jobs()
+    return _profiles_payload()
 
 
 # ------------------------------------------------------------------ export
@@ -544,6 +614,13 @@ def export_all(jid: str):
         z.writestr(f"{pr.job_name}_สรุป.xlsx", build_xlsx(pr))
         z.writestr(f"{pr.job_name}_ราคา.xlsx", build_pricing_xlsx(pr))
     return _attach(buf.getvalue(), f"{pr.job_name}_DXF.zip", "application/zip")
+
+
+@app.get("/api/jobs/{jid}/export/steps")
+def export_steps(jid: str):
+    """Each part of the assembly as its own STEP file (ZIP)."""
+    pr = get_job(jid)
+    return _attach(pr.steps_zip(), f"{pr.job_name}_ชิ้นส่วน_STEP.zip", "application/zip")
 
 
 @app.get("/api/info")
