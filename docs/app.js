@@ -705,6 +705,18 @@ class Viewer {
     cv.addEventListener("pointermove", (e) => this.onMove(e));
     cv.addEventListener("pointerup", (e) => this.onUp(e));
     cv.addEventListener("pointerleave", () => { this.hover = null; this.pt = null; this.draw(); setStatus(); });
+    cv.addEventListener("dblclick", (e) => {
+      const it = this.itemAt(...this.pos(e));
+      if (it && this.scene.mode === "group" && it.part_id) { this.closeCard(); selectPart(it.part_id); }
+    });
+    // click on a line, hole, bend or face: details in a small card (same look as the 3D card)
+    this.card = document.createElement("div");
+    this.card.className = "card3d"; this.card.hidden = true;
+    cv.parentElement.appendChild(this.card);
+    this.card.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close]")) this.closeCard();
+      const o = e.target.closest("[data-open]"); if (o) { this.closeCard(); selectPart(o.dataset.open); }
+    });
     window.addEventListener("keydown", (e) => this.onKey(e));
     this.colors();
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { this.colors(); this.draw(); if (v3) v3.setColors(colors3d()); });
@@ -722,6 +734,7 @@ class Viewer {
   }
   setScene(scene, keepView) {
     this.scene = scene; this.measure = []; this.hover = null; this.hiBend = -1;
+    this.closeCard();
     this.buildIndex();
     if (!keepView) this.fit(); else this.draw();
   }
@@ -750,6 +763,7 @@ class Viewer {
     const r = this.cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
     const k = Math.exp(-e.deltaY * 0.0015), [wx, wy] = this.s2w(px, py);
     this.s = Math.min(Math.max(this.s * k, 0.02), 400);
+    this.closeCard();
     this.ox = px - wx * this.s; this.oy = py + wy * this.s; this.fitted = true; this.draw();
   }
   pos(e) { const r = this.cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
@@ -762,7 +776,7 @@ class Viewer {
     const [px, py] = this.pos(e);
     if (this.drag) {
       const dx = px - this.drag.px, dy = py - this.drag.py;
-      if (Math.abs(dx) + Math.abs(dy) > 3) { this.drag.moved = true; this.cv.classList.add("pan"); }
+      if (Math.abs(dx) + Math.abs(dy) > 3) { this.drag.moved = true; this.cv.classList.add("pan"); this.closeCard(); }
       if (this.drag.moved) { this.ox = this.drag.ox + dx; this.oy = this.drag.oy + dy; this.fitted = true; this.draw(); return; }
     }
     this.pt = [px, py];
@@ -778,9 +792,95 @@ class Viewer {
       if (this.measure.length >= 2) this.measure = [];
       this.measure.push(p); this.draw(); setStatus(this); return;
     }
-    const it = this.itemAt(px, py);
-    if (it && this.scene.mode === "group" && it.part_id && S.sel && (S.sel.kind !== "part" || S.sel.id !== it.part_id)) selectPart(it.part_id);
+    this.clickCard(e, px, py);
   }
+  /* ---- detail card ---- */
+  async clickCard(e, px, py) {
+    const h = this.hover, it = this.itemAt(px, py) || (h && this.itemNear(h));
+    let info = null;
+    if (h) info = this.primCard(h, it);
+    else if (it) { const sel = S.sel; info = await this.faceCard(it, px, py); if (S.sel !== sel) return; }
+    if (info) this.showCard(e, info); else this.closeCard();
+  }
+  itemNear(h) { return (this.scene && this.scene.items.find((it) => it.prims.includes(h.info) || it.bends.includes(h.info))) || null; }
+  primCard(h, it) {
+    const q = h.info, ox = it ? it.x : 0, oy = it ? it.y : 0, p = it && part(it.part_id);
+    const t = p && p.thickness.used ? [["ความหนาแผ่น", `${fmt(p.thickness.used)} มม.`]] : [];
+    const at = (x, y) => `X ${fmt(x - ox, 1)} · Y ${fmt(y - oy, 1)}`;
+    const edges = (x, y) => [["ห่างขอบซ้าย", `${fmt(x - ox)} มม.`], ["ห่างขอบล่าง", `${fmt(y - oy)} มม.`]];
+    if (h.kind === "circle") return { title: "รู", rows: [["เส้นผ่านศูนย์กลาง", `Ø ${fmt(q.r * 2)} มม.`], ["รัศมี", `R ${fmt(q.r)} มม.`],
+      ["จุดศูนย์กลาง", at(...q.c)], ...edges(...q.c), ...t] };
+    if (h.kind === "arc") return { title: "ส่วนโค้ง", rows: [["รัศมี", `R ${fmt(q.r)} มม.`], ["ความยาวตามโค้ง", `${fmt(primLen(q))} มม.`],
+      ["จุดศูนย์กลาง", at(...q.c)], ...t] };
+    if (h.kind === "line") {
+      const a = Math.atan2(q.b[1] - q.a[1], q.b[0] - q.a[0]) * 180 / Math.PI;
+      return { title: "เส้นตรง (ขอบตัด)", rows: [["ความยาว", `${fmt(primLen(q))} มม.`], ["มุมของเส้น", `${fmt(((a % 180) + 180) % 180, 1)}°`],
+        ["จุดเริ่ม", at(...q.a)], ["จุดปลาย", at(...q.b)], ...t] };
+    }
+    if (h.kind === "bend") {
+      const i = it ? it.bends.indexOf(q) : -1, len = Math.hypot(q.b[0] - q.a[0], q.b[1] - q.a[1]);
+      const horiz = Math.abs(q.b[1] - q.a[1]) < Math.abs(q.b[0] - q.a[0]);
+      const pos = horiz ? ["ห่างขอบล่าง", `${fmt((q.a[1] + q.b[1]) / 2 - oy)} มม.`] : ["ห่างขอบซ้าย", `${fmt((q.a[0] + q.b[0]) / 2 - ox)} มม.`];
+      const rows = [["มุมด้านใน", `${fmt(q.angle_in, q.angle_in % 1 ? 1 : 0)}°`], ["ทิศ", q.dir === "up" ? "พับขึ้น" : "พับลง"]];
+      if (q.r !== undefined) rows.push(["รัศมีใน (R)", `${fmt(q.r)} มม.`]);
+      if (q.method) rows.push(["วิธีคิด", q.method === "table" ? `ตารางค่ายืด BD ${fmt(q.bd)}` : `K-factor ${q.k}`]);
+      if (q.ba !== undefined) rows.push(["ความกว้างแถบพับ (BA)", `${fmt(q.ba)} มม.`]);
+      rows.push(["ความยาวรอยพับ", `${fmt(len)} มม.`], pos, ...t);
+      return { title: i >= 0 && this.scene.mode === "part" ? `รอยพับ #${i + 1}` : "รอยพับ", rows };
+    }
+    return { title: "เส้นโค้งอิสระ", rows: [["ความยาว", `${fmt(primLen(q))} มม.`], ...t] };
+  }
+  /* a click inside a part: the face (flange) under the mouse when the fold model knows it, else the whole flat piece */
+  async faceCard(it, px, py) {
+    const p = part(it.part_id); if (!p) return null;
+    const [wx, wy] = this.s2w(px, py), lx = wx - it.x, ly = wy - it.y;
+    if (this.scene.mode === "part" && p.flat) {
+      try {
+        const key = "fold:" + p.id + ":" + S.version;
+        let m = S.cache.get(key);
+        if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/fold`); S.cache.set(key, m); }
+        const k = this.scene.items.indexOf(it), F = m.pieces[k];
+        if (F) {
+          const [x0, y0, x1] = F.bbox, rx = p.flip ? x1 - lx : lx + x0, ry = ly + y0;
+          const R = F.regions.find((r) => r.polys.some((pl) => inRing(rx, ry, pl.outer) && !pl.holes.some((hh) => inRing(rx, ry, hh))));
+          if (R && R.kind === "bend") {
+            const b = F.bends[R.bend];
+            if (b) return { title: `รอยพับ #${b.n}`, rows: [["มุมด้านใน", `${fmt(b.angle_in, b.angle_in % 1 ? 1 : 0)}°`], ["ทิศ", b.dir === "up" ? "พับขึ้น" : "พับลง"],
+              ["รัศมีใน (R)", `${fmt(b.r)} มม.`], ["วิธีคิด", b.method === "table" ? `ตารางค่ายืด BD ${fmt(b.bd)}` : `K-factor ${b.k}`],
+              ["ความกว้างแถบพับ (BA)", `${fmt(b.ba)} มม.`], ["ความยาวรอยพับ", `${fmt(b.len)} มม.`], ["ความหนาแผ่น", `${fmt(m.t)} มม.`]] };
+          }
+          if (R) {
+            const holes = R.polys.reduce((n, pl) => n + pl.holes.length, 0);
+            const area = R.polys.reduce((a, pl) => a + Math.abs(ringArea(pl.outer)) - pl.holes.reduce((s, hh) => s + Math.abs(ringArea(hh)), 0), 0);
+            const joins = F.bends.filter((b) => R.chain[0] === b.id || b.chain.slice(1).join() === R.chain.join());
+            return { title: "หน้าแผ่น (ปีก)", rows: [["ขนาดหน้านี้", `${fmt(R.size[0])} × ${fmt(R.size[1])} มม.`], ["พื้นที่หน้านี้", `${fmt(area / 100, 1)} ซม.²`],
+              ["รูในหน้านี้", `${holes}`], ["ต่อกับรอยพับ", joins.length ? joins.map((b) => "#" + b.n).join(", ") : "–"], ["ความหนาแผ่น", `${fmt(m.t)} มม.`]] };
+          }
+        }
+      } catch (_) { /* no fold model: show the piece */ }
+    }
+    const area = it.loops.reduce((a, l) => a + (l.role === "outer" ? 1 : -1) * Math.abs(ringArea(l.pts)), 0);
+    const holes = it.loops.filter((l) => l.role !== "outer").length;
+    const cut = it.prims.reduce((a, q) => a + primLen(q), 0);
+    const rows = [["ขนาดแผ่นคลี่", `${fmt(it.w)} × ${fmt(it.h)} มม.`], ["พื้นที่", `${fmt(area / 100, 1)} ซม.²`], ["รู", `${holes}`],
+      ["รอยพับ", `${it.bends.length}`], ["ความยาวตัดรวม", `${fmt(cut, 0)} มม.`]];
+    if (p.thickness.used) rows.push(["ความหนาแผ่น", `${fmt(p.thickness.used)} มม.`]);
+    rows.push(["กลุ่ม", p.code || "–"], ["จำนวน", `${p.qty}`]);
+    return { title: it.name + (it.copy > 1 ? " #" + it.copy : ""), rows, open: this.scene.mode === "group" ? p.id : null };
+  }
+  showCard(e, info) {
+    const r = this.cv.getBoundingClientRect();
+    this.card.innerHTML = `<header><b>${esc(info.title)}</b><button type="button" data-close aria-label="ปิด">×</button></header>
+      <dl>${info.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+      ${info.open ? `<footer><button type="button" class="btn small" data-open="${esc(info.open)}">เปิดชิ้นนี้</button></footer>` : ""}`;
+    this.card.hidden = false;
+    const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
+    let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
+    if (x + cw > r.width - 8) x = Math.max(8, e.clientX - r.left - cw - 14);
+    if (y + ch > r.height - 8) y = Math.max(8, r.height - ch - 8);
+    this.card.style.left = x + "px"; this.card.style.top = y + "px";
+  }
+  closeCard() { if (this.card) this.card.hidden = true; }
   onKey(e) {
     if (e.target.closest("input,select,textarea,dialog") || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = keyOf(e);
@@ -791,7 +891,7 @@ class Viewer {
     }
     if (k === "f") this.fit();
     else if (k === "b") toggleOpt("bend"); else if (k === "d") toggleOpt("dim"); else if (k === "n") toggleOpt("name"); else if (k === "m") toggleOpt("measure");
-    else if (e.key === "Escape") { this.measure = []; this.draw(); }
+    else if (e.key === "Escape") { this.measure = []; this.closeCard(); this.draw(); }
   }
   itemAt(px, py) {
     if (!this.scene) return null;
@@ -976,6 +1076,8 @@ const distSeg = (px, py, ax, ay, bx, by) => {
   let t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 };
+const ringArea = (r) => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); return a / 2; };
+const inRing = (x, y, r) => { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, yi] = r[i], [xj, yj] = r[j]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
 const angIn = (a, a0, a1) => { a0 = (a0 + 360) % 360; a1 = (a1 + 360) % 360; return a0 <= a1 ? a >= a0 && a <= a1 : a >= a0 || a <= a1; };
 const primLen = (q) => {
   if (q.t === "line") return Math.hypot(q.b[0] - q.a[0], q.b[1] - q.a[1]);
@@ -1086,6 +1188,8 @@ async function ensure3d() {
     }
   });
   v3.setColors(colors3d());
+  try { v3.animOn = localStorage.getItem("sf3dAnim") === "1"; } catch (_) { /* private mode */ }
+  setOn($("#t3Anim"), v3.animOn);
   return v3;
 }
 async function show3d(p) {
@@ -1096,7 +1200,7 @@ async function show3d(p) {
   try {
     const viewer = await ensure3d();
     if (p.flat) {
-      // sheet part: built from the flat pattern, shown flat first, "พับ" folds it
+      // sheet part: built from the flat pattern, shown folded; "คลี่" / "พับ" switch
       const key = "fold:" + p.id + ":" + S.version;
       let m = S.cache.get(key);
       if (!m) { m = await getJSON(`/api/jobs/${S.jobId}/parts/${p.id}/fold`); S.cache.set(key, m); }
@@ -1678,6 +1782,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   tog3("#t3Dim", "size"); tog3("#t3Ang", "angle"); tog3("#t3Len", "len"); tog3("#t3Hole", "hole");
   $("#t3Fold").onclick = () => { if (!v3 || !v3.F) return; if (v3.F.T >= v3.F.n - 1e-9) v3.unfold(); else v3.fold(); };
   $("#t3Prog").addEventListener("input", (e) => v3 && v3.scrub(+e.target.value / 1000));
+  $("#t3Anim").onclick = () => { if (!v3) return; v3.animOn = !v3.animOn; setOn($("#t3Anim"), v3.animOn); try { localStorage.setItem("sf3dAnim", v3.animOn ? "1" : "0"); } catch (_) { /* private mode */ } };
   $("#t3Press").onclick = () => { if (!v3) return; const on = !v3.pressOn; v3.setPress(on); setOn($("#t3Press"), on); };
   document.querySelectorAll("[data-view3]").forEach((b) => (b.onclick = () => v3 && v3.view(b.dataset.view3)));
   $("#tBend").onclick = () => toggleOpt("bend"); $("#tDim").onclick = () => toggleOpt("dim");
