@@ -1,7 +1,7 @@
 /* 3D view of one part. Loaded on demand by app.js; three.js is bundled in ./vendor so it works offline.
 
-   Sheet parts: built from the flat pattern (fold model from the server), shown flat first; "พับ" folds
-   it bend by bend in table order (#1, #2 ...) with an animation, "คลี่" unfolds. Parts without a flat
+   Sheet parts: built from the flat pattern (fold model from the server), shown folded; "คลี่" / "พับ"
+   switch at once, or bend by bend with an animation when animOn (menu "อนิเมชันพับ") or the press is on. Parts without a flat
    pattern (bolts, tubes ...) show the solid as modelled.
    Labels can be switched on/off: overall size, bend angles, lengths, holes/radii.
    Click a line, a bend or a flat area to see its details in a small card. */
@@ -14,6 +14,7 @@ const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDig
 const fmtG = (n) => String(Math.round(n * 100) / 100);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const SEC_PER_BEND = 0.75;
+const ringArea = (r) => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); return a / 2; };
 
 export class Viewer3D {
   constructor(wrap, onInfo, onState) {
@@ -50,6 +51,7 @@ export class Viewer3D {
     this.pointer = new THREE.Vector2();
     this.show = { size: true, angle: true, len: false, hole: false };
     this.pressOn = false;                   // "พับ" runs the press brake simulation
+    this.animOn = false;                    // "พับ" / "คลี่" animate bend by bend (off: switch at once)
     this.colors = {};
     this.lines = [];                        // pickable lines (Line objects with userData)
     this.dimLabels = [];
@@ -227,7 +229,7 @@ export class Viewer3D {
     this.diag = Math.max(1, box.getSize(new THREE.Vector3()).length());
     this.root.position.sub(ctr);
     this.rootPos = this.root.position.clone();
-    this.setT(0);
+    this.setT(F.n);
     this.view("iso");
     this.planAhead();
   }
@@ -455,6 +457,7 @@ export class Viewer3D {
   }
   fold() {
     const F = this.F; if (!F) return;
+    if (!this.animOn && !this.canPress()) { this.jump(F.n); return; }
     if (!this.canPress()) { this.play(F.n); return; }
     if (!this.sim && !this.plan && this.worker) {
       // the bend order is still being worked out: say so, carry on when it is ready
@@ -473,7 +476,19 @@ export class Viewer3D {
       setTimeout(() => { if (this.anim || !this.inPress) return; this.exitPress(); this.setT(F.n); this.view("iso"); }, 900);
     });
   }
-  unfold() { if (!this.F) return; if (this.inPress) { this.stopAnim(); this.exitPress(); this.setT(this.F.T); } this.play(0); }
+  unfold() {
+    if (!this.F) return;
+    if (this.inPress) { this.stopAnim(); this.exitPress(); this.setT(this.F.T); }
+    if (!this.animOn) { this.jump(0); return; }
+    this.play(0);
+  }
+  /* no animation: straight to flat (0) or folded (n) */
+  jump(T) {
+    this.stopAnim();
+    if (this.inPress) this.exitPress();
+    this.dimGroup.visible = this.show.size;
+    this.setT(T); this.view(null);
+  }
   stopAnim() { if (this.animRaf) cancelAnimationFrame(this.animRaf); this.animRaf = null; this.anim = null; }
   scrub(frac) {
     if (!this.F) return;
@@ -549,7 +564,10 @@ export class Viewer3D {
   flangeCard(R, pc) {
     // the bend this flange hangs from, and the bends that hang from it
     const joins = pc.bends.filter((b) => R.chain[0] === b.id || b.chain.slice(1).join() === R.chain.join());
-    return { title: "แผ่นเรียบ (ปีก)", rows: [["ขนาดในแบบคลี่", `${fmt(R.size[0])} × ${fmt(R.size[1])} มม.`], ["ความหนาแผ่น", `${fmt(this.thick)} มม.`],
+    const holes = R.polys.reduce((n, p) => n + p.holes.length, 0);
+    const area = R.polys.reduce((a, p) => a + Math.abs(ringArea(p.outer)) - p.holes.reduce((s, h) => s + Math.abs(ringArea(h)), 0), 0);
+    return { title: "หน้าแผ่น (ปีก)", rows: [["ขนาดในแบบคลี่", `${fmt(R.size[0])} × ${fmt(R.size[1])} มม.`], ["พื้นที่หน้านี้", `${fmt(area / 100, 1)} ซม.²`],
+      ["รูในหน้านี้", `${holes}`], ["ความหนาแผ่น", `${fmt(this.thick)} มม.`],
       ["ต่อกับรอยพับ", joins.length ? joins.map((b) => "#" + b.n).join(", ") : "–"]] };
   }
   showCard(e, info) {
