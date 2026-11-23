@@ -27,6 +27,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from .i18n import norm, tr, tr_exact, translate_workbook
 from .xlsx_safe import put, text
 
 HEADER = ("เบอร์", "ความหนา (มม.)", "ค่ายืด (มม.)", "ใช้กับเหล็ก (ว่าง = ทุกชนิด)")
@@ -60,28 +61,29 @@ def _sheet_title(name: str, used: set) -> str:
     return title
 
 
-def write_profiles(path: Path, profiles: list) -> None:
+def write_profiles(path: Path, profiles: list, lang: str = "th") -> None:
     """Write one sheet per profile. Raises PermissionError if the file is open in Excel."""
     wb = Workbook()
     wb.remove(wb.active)
     used: set = set()
+    yes_no = (YES, NO) if norm(lang) == "th" else ("Yes", "No")
     head_fill = PatternFill("solid", fgColor="DDEBF7")
     key_fill = PatternFill("solid", fgColor="F2F2F2")
     thin = Side(style="thin", color="999999")
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
     for p in profiles:
-        ws = wb.create_sheet(_sheet_title(p.get("name"), used))
+        ws = wb.create_sheet(_sheet_title(tr_exact(p.get("name"), lang), used))
         for i, (key, label, default, kind) in enumerate(SETTINGS, start=1):
             v = p.get(key, default)
             a = ws.cell(i, 1, label)
             a.fill, a.border, a.font = key_fill, box, Font(bold=True)
             c = ws.cell(i, 2)
             if kind == "bool":
-                put(c, YES if v else NO)
+                put(c, (YES if v else NO) if yes_no == (YES, NO) else (yes_no[0] if v else yes_no[1]))
             elif kind == "num":
                 c.value = float(v)
             else:
-                put(c, text(v))
+                put(c, text(tr_exact(v, lang) if key == "name" else v))
             c.border = box
             c.alignment = Alignment(horizontal="left")
         for j, h in enumerate(HEADER, start=1):
@@ -95,7 +97,7 @@ def write_profiles(path: Path, profiles: list) -> None:
             put(ws.cell(i, 4), text(r.get("material", "")))
             for j in range(1, 5):
                 ws.cell(i, j).border = box
-        dv = DataValidation(type="list", formula1=f'"{YES},{NO}"', allow_blank=False)
+        dv = DataValidation(type="list", formula1=f'"{yes_no[0]},{yes_no[1]}"', allow_blank=False)
         ws.add_data_validation(dv)
         dv.add("B7:B8")
         for i, msg in enumerate((
@@ -110,6 +112,7 @@ def write_profiles(path: Path, profiles: list) -> None:
         ws.freeze_panes = ws.cell(TABLE_ROW + 1, 1)
     if not wb.sheetnames:
         raise ValueError("ต้องมีโหมดค่ายืดอย่างน้อย 1 โหมด")
+    translate_workbook(wb, lang, titles=False)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -157,7 +160,7 @@ def read_profiles(path: Path) -> list:
         labels = {str(ws.cell(r, 1).value or "").strip(): r for r in range(1, TABLE_ROW + 1)}
         p: dict = {}
         for key, label, default, kind in SETTINGS:
-            r = labels.get(label)
+            r = labels.get(label) or labels.get(tr(label, "en"))
             v = ws.cell(r, 2).value if r else None
             if kind == "num":
                 p[key] = _num(v, label, title, allow_blank=True, default=default)
@@ -165,7 +168,7 @@ def read_profiles(path: Path) -> list:
                 p[key] = _bool(v, label, title, default)
             else:
                 p[key] = str(v).strip() if v is not None else ""
-        hdr = next((r for r in range(1, ws.max_row + 1) if str(ws.cell(r, 1).value or "").strip() == HEADER[0]), None)
+        hdr = next((r for r in range(1, ws.max_row + 1) if str(ws.cell(r, 1).value or "").strip() in (HEADER[0], tr(HEADER[0], "en"))), None)
         if hdr is None:
             raise ValueError(f"ชีต “{title}”: ไม่พบหัวตาราง “{HEADER[0]}” ในคอลัมน์ A")
         rows = []

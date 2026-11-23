@@ -15,6 +15,7 @@ from .analysis import SheetAnalysis, analyze
 from .bend import BendModel
 from .brep import SolidData, extract_solid
 from .layout import Item, Placed, Sheet, pack, place_geometry, place_loops
+from .i18n import fname
 from .profiles import ProfileStore, bend_model, match_row, material_code, validate_pricing
 from .sharpbend import sharp_corners_to_bends
 from .splitfused import merge_copies, split_fused
@@ -344,7 +345,7 @@ class Project:
         if min(wmax, hmax) > 0 and max(wmax, hmax) / min(wmax, hmax) > 15:
             rec.warnings.append("สัดส่วนยาวมาก (>15:1) - ถ้าเป็นเหล็กฉาก/โปรไฟล์ที่ซื้อมา ให้ติ๊กไม่ตัด")
 
-    def steps_zip(self) -> bytes:
+    def steps_zip(self, lang: str = "th") -> bytes:
         """Every part as its own STEP file (a part opens on its own in SolidWorks and other CAD programs):
         folder "ตัด" = parts that go to the laser, "ไม่ตัด" = the rest. A part cut out of a fused solid keeps its place."""
         import io
@@ -364,7 +365,7 @@ class Project:
                 cut = rec.include and rec.status == "sheet"
                 t = f"_{fmt_t(rec.thickness_used(prof))}mm" if rec.measured_t else ""
                 base = safe_name(f"{rec.name}{t}_x{rec.qty_asm}")
-                folder = "ตัด" if cut else "ไม่ตัด"
+                folder = fname("cut" if cut else "not_cut", lang)
                 key = f"{folder}/{base}".lower()
                 used[key] = used.get(key, 0) + 1
                 name = f"{folder}/{base}{'' if used[key] == 1 else '_' + str(used[key])}.step"

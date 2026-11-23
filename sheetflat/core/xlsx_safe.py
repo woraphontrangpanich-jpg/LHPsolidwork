@@ -6,6 +6,15 @@ writers then store them as plain text. Formulas the program builds itself are pl
 """
 
 
+import weakref
+
+_CUSTOMER = weakref.WeakKeyDictionary()      # worksheet -> coordinates of cells written with put(Text): never translated
+
+
+def customer_cells(ws) -> set:
+    return _CUSTOMER.get(ws, set())
+
+
 class Text(str):
     """A string that is always stored as text, never as a formula."""
 
@@ -19,4 +28,5 @@ def put(cell, v):
     cell.value = v
     if isinstance(v, Text):
         cell.data_type = "s"
+        _CUSTOMER.setdefault(cell.parent, set()).add(cell.coordinate)
     return cell

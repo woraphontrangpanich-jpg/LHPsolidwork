@@ -23,6 +23,7 @@ from .core.project import Project
 from .core.dxf_import import DxfReadError
 from .core.step_reader import StepReadError
 from .core.sw_convert import SolidWorksUnavailable, convert_to_step, solidworks_available
+from .core.i18n import fname, norm
 from .core.xlsx_export import build_xlsx
 from .core.pricing_xlsx import build_pricing_xlsx
 
@@ -528,11 +529,22 @@ def put_profiles(body: dict):
 
 
 @app.get("/api/profiles/xlsx")
-def download_bend_xlsx():
-    """The bend-table workbook: one sheet per mode. Edit it in Excel and upload it back (or save it over data/bend_tables.xlsx)."""
+def download_bend_xlsx(lang: str = ""):
+    """The bend-table workbook: one sheet per mode, in the language of the page (?lang=th|en).
+    Edit it in Excel and upload it back (or save it over data/bend_tables.xlsx); both languages can be read."""
     store.refresh()
-    return _attach(store.bend_path.read_bytes(), store.bend_path.name,
-                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if norm(lang) == "th":
+        return _attach(store.bend_path.read_bytes(), store.bend_path.name,
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    from .core.bend_xlsx import write_profiles
+    tmp = Path(tempfile.mkdtemp(prefix="bend_", dir=DATA))
+    try:
+        out = tmp / "bend_tables.xlsx"
+        write_profiles(out, store.data["profiles"], lang)
+        return _attach(out.read_bytes(), store.bend_path.name,
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @app.post("/api/profiles/xlsx")
@@ -588,39 +600,39 @@ def export_dxf(jid: str, gid: str, idx: int):
 
 
 @app.get("/api/jobs/{jid}/export/xlsx")
-def export_xlsx(jid: str):
+def export_xlsx(jid: str, lang: str = ""):
     pr = get_job(jid)
     with pr.lock:
-        return _attach(build_xlsx(pr), f"{pr.job_name}_สรุป.xlsx",
+        return _attach(build_xlsx(pr, lang), f"{pr.job_name}_{fname('summary', lang)}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/api/jobs/{jid}/export/pricing")
-def export_pricing(jid: str):
+def export_pricing(jid: str, lang: str = ""):
     pr = get_job(jid)
     with pr.lock:
-        return _attach(build_pricing_xlsx(pr), f"{pr.job_name}_ราคา.xlsx",
+        return _attach(build_pricing_xlsx(pr, lang), f"{pr.job_name}_{fname('price', lang)}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/api/jobs/{jid}/export/all")
-def export_all(jid: str):
+def export_all(jid: str, lang: str = ""):
     pr = get_job(jid)
     buf = io.BytesIO()
     with pr.lock, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for g in pr.groups:
             for s in g.sheets:
                 z.writestr(pr.sheet_filename(g, s.index) + ".dxf", _dxf_for(pr, g, s.index))
-        z.writestr(f"{pr.job_name}_สรุป.xlsx", build_xlsx(pr))
-        z.writestr(f"{pr.job_name}_ราคา.xlsx", build_pricing_xlsx(pr))
+        z.writestr(f"{pr.job_name}_{fname('summary', lang)}.xlsx", build_xlsx(pr, lang))
+        z.writestr(f"{pr.job_name}_{fname('price', lang)}.xlsx", build_pricing_xlsx(pr, lang))
     return _attach(buf.getvalue(), f"{pr.job_name}_DXF.zip", "application/zip")
 
 
 @app.get("/api/jobs/{jid}/export/steps")
-def export_steps(jid: str):
+def export_steps(jid: str, lang: str = ""):
     """Each part of the assembly as its own STEP file (ZIP)."""
     pr = get_job(jid)
-    return _attach(pr.steps_zip(), f"{pr.job_name}_ชิ้นส่วน_STEP.zip", "application/zip")
+    return _attach(pr.steps_zip(lang), f"{pr.job_name}_{fname('parts_step', lang)}.zip", "application/zip")
 
 
 @app.get("/api/info")

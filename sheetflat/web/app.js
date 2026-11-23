@@ -50,6 +50,8 @@ async function api(path, opts = {}) {
   }
   return res;
 }
+/* the language of the page (th | en): files we hand out (Excel, ZIP folders, file names) follow it */
+const lang = () => window.SF_LANG || "th";
 const getJSON = async (p) => (await api(p)).json();
 const sendJSON = async (p, method, body) => (await api(p, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
 
@@ -280,7 +282,7 @@ async function releaseInfo() {
     $("#dlMeta").textContent = `SheetFlat-windows.zip · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
     const when = new Date(rel.published_at || a.updated_at || a.created_at);
     if (!Number.isNaN(when.getTime())) {
-      const th = when.toLocaleString("th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
+      const th = when.toLocaleString(lang() === "en" ? "en-GB" : "th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
       $("#dlDate").textContent = `อัปเดตล่าสุด ${th} น. (เวลาประเทศไทย)`;
       $("#dlDate").dateTime = when.toISOString();
       $("#dlDate").hidden = false;
@@ -359,7 +361,7 @@ function renderOverview() {
     </tbody><tfoot><tr>${ed ? "<td></td>" : ""}<td></td><td>รวม</td><td colspan="3"></td><td class="qty">${c.parts.reduce((n, p) => n + p.qty, 0)}</td></tr></tfoot></table></section>`).join("");
   const nfiles = P.groups.reduce((n, g) => n + g.sheets.length, 0);
   const box = $("#overview");
-  box.innerHTML = `<article class="order"><header class="order-head"><div><h2>ใบสั่งตัด ${esc(P.job)}</h2><p>${esc(P.source)} · ${new Date().toLocaleDateString("th-TH")} · ${esc(P.profile.name)}</p></div>
+  box.innerHTML = `<article class="order"><header class="order-head"><div><h2>ใบสั่งตัด ${esc(P.job)}</h2><p>${esc(P.source)} · ${new Date().toLocaleDateString(lang() === "en" ? "en-GB" : "th-TH", { day: "numeric", month: "short", year: "numeric" })} · ${esc(P.profile.name)}</p></div>
     <div class="totals"><div><b>${nfiles}</b><span>ไฟล์ DXF</span></div><div><b>${s.cut_pieces}</b><span>ชิ้นที่ตัด</span></div><div><b>${s.excluded_pieces}</b><span>ไม่ตัด</span></div></div></header>
     <div class="edit-row">${ed ? "" : `<button class="btn small" id="ovEdit">แก้ไขกลุ่ม</button><span class="hint">ย้ายชิ้นไปเหล็กชนิดหรือความหนาอื่น หรือแยกเป็นกลุ่มที่ไม่ต้องตัด เช่น ซื้อสำเร็จรูป</span>`}
       <label class="sets-box">จำนวนชุดที่ผลิต<input type="number" id="ovSets" min="1" step="1" value="${P.sets || 1}" aria-label="จำนวนชุดที่ผลิต"></label></div>
@@ -638,7 +640,7 @@ function partInspector(p) {
     h += acc("check", "ตรวจสอบความถูกต้อง", cMeta, nBad ? "bad" : nWarn ? "warn" : "", !!(nBad || nWarn));
     h += checks.map((x) => chk(...x)).join("");
     h += `</details>`;
-    h += acc("bends", "รอยพับ", f.bends.length ? `${f.bends.length} จุด` : "ไม่มี");
+    h += acc("bends", "รอยพับ", f.bends.length ? `${f.bends.length} จุดพับ` : "ไม่มี");
     if (f.bends.length) {
       h += `<table class="bt"><thead><tr><th>#</th><th class="n">มุมใน</th><th class="n">R ใน</th><th>วิธี</th><th class="n">BA</th></tr></thead><tbody>` +
         f.bends.map((b, i) => `<tr data-bend="${i}"><td>${i + 1}</td><td class="n">${fmt(b.angle_in, 1)}°</td><td class="n">${fmt(b.r, 2)}</td><td><span class="tag ${b.method === "table" ? "tbl" : ""}">${b.method === "table" ? "ตาราง BD " + fmt(b.bd, 2) : "K " + b.k}</span></td><td class="n">${fmt(b.ba, 2)}</td></tr>`).join("") +
@@ -683,7 +685,7 @@ function download(rel) {
     const a = document.createElement("a"); a.href = DEMO + f.path; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
     toast("กำลังดาวน์โหลด " + f.name); return;
   }
-  location.href = `/api/jobs/${S.jobId}/export/${rel}`;
+  location.href = `/api/jobs/${S.jobId}/export/${rel}?lang=${lang()}`;
   toast(rel === "all" ? "กำลังดาวน์โหลด DXF ทั้งหมด + Excel" : rel === "xlsx" ? "กำลังดาวน์โหลดใบสรุป Excel" : "กำลังดาวน์โหลดไฟล์ DXF");
 }
 
@@ -1157,7 +1159,7 @@ function renderProfileDialog() {
   $("#profileBody").innerHTML = `
     ${bf && !DEMO ? `<div class="bendfile"><p class="hint" style="margin:0 0 6px">ตารางค่ายืดเก็บเป็นไฟล์ Excel (1 ชีต = 1 โหมด) โปรแกรมอ่านค่าจากไฟล์นี้ทุกครั้งที่คำนวณ จึงแก้ใน Excel แล้วส่งต่อให้คนอื่นใช้ได้เลย<br>ไฟล์: <code>${esc(bf.path)}</code></p>
       ${bf.error ? `<p class="hint" style="color:var(--bad,#c0392b)">อ่านไฟล์ Excel ไม่ได้ ใช้ค่าล่าสุดที่อ่านได้ไปก่อน: ${esc(bf.error)}</p>` : ""}
-      <div class="row"><a class="btn small" href="/api/profiles/xlsx" download>ดาวน์โหลดไฟล์ Excel ค่ายืด</a>
+      <div class="row"><a class="btn small" href="/api/profiles/xlsx?lang=${lang()}" download>ดาวน์โหลดไฟล์ Excel ค่ายืด</a>
         <button type="button" class="btn small" id="pfImport">นำเข้าจากไฟล์ Excel</button>
         <input type="file" id="pfImportFile" accept=".xlsx" hidden></div></div>` : ""}
     <div class="row"><label for="pfSel">โหมด</label>
@@ -1307,7 +1309,7 @@ function renderPriceForm() {
       </div>
       <h3 class="dlg-h3">ค่าใช้จ่ายอื่น</h3>
       <p class="hint">เพิ่มรายการเองได้ เช่น ค่าพับ ค่าติ๊ก เจาะรู พ่นทราย ค่าขนส่ง · โปรแกรมนับจุดพับและรูให้เอง</p>
-      <table class="pt extra-pt"><thead><tr><th>ใช้</th><th>รายการ</th><th>บาท</th><th>คิด</th><th></th></tr></thead><tbody>
+      <table class="pt extra-pt"><thead><tr><th>เปิดใช้</th><th>รายการ</th><th>บาท</th><th>คิดต่อ</th><th></th></tr></thead><tbody>
         ${P.extras.map((e, i) => `<tr><td><input type="checkbox" data-e="${i}" data-f="on" ${e.on ? "checked" : ""} aria-label="ใช้ ${esc(e.name)}" ${dis}></td>
           <td><input type="text" data-e="${i}" data-f="name" value="${esc(e.name)}" aria-label="ชื่อรายการ" ${dis}></td>
           <td><input type="number" step="0.5" min="0" data-e="${i}" data-f="rate" value="${e.rate}" aria-label="ราคา ${esc(e.name)}" ${dis}></td>
@@ -1391,7 +1393,7 @@ function renderPriceResult() {
 async function priceXlsx() {
   if (DEMO) { download("pricing"); return; }
   clearTimeout(schedulePrice._t);
-  if (await pushPrice()) location.href = `/api/jobs/${S.jobId}/export/pricing`;
+  if (await pushPrice()) location.href = `/api/jobs/${S.jobId}/export/pricing?lang=${lang()}`;
 }
 
 /* ---- save the whole job as one file ---- */
@@ -1499,7 +1501,7 @@ function exportPricing() {
   if (!S.project) return;
   if (S.price) priceXlsx();
   else if (DEMO) download("pricing");
-  else { location.href = `/api/jobs/${S.jobId}/export/pricing`; toast("กำลังดาวน์โหลดใบคิดราคา (Excel)"); }
+  else { location.href = `/api/jobs/${S.jobId}/export/pricing?lang=${lang()}`; toast("กำลังดาวน์โหลดใบคิดราคา (Excel)"); }
 }
 /* previous / next part in the order of the list on the left */
 function stepPart(dir) {
@@ -1659,6 +1661,8 @@ function initAcc() {
 window.addEventListener("DOMContentLoaded", async () => {
   viewer = new Viewer($("#cv"));
   initTheme(); initMenus(); initPalette(); initShortcuts(); initAcc();
+  // texts built with the language in them (dates) are rebuilt when the language changes
+  window.addEventListener("sf-lang", () => { if (S.project && !$("#bench").hidden) { renderInspector(); if (S.sel && S.sel.kind === "overview") renderOverview(); } });
   $("#btnKeys").onclick = openKeys; $("#stKeys").onclick = openKeys; $("#btnPalette").onclick = openPalette;
   $("#btnPriceXlsx").onclick = exportPricing;
   $("#btnSave").onclick = saveJob;

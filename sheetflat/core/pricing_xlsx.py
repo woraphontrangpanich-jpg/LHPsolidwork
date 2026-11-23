@@ -22,6 +22,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter as COL
 
+from .i18n import tr, tr_exact, translate_workbook
 from .profiles import EXTRA_UNITS
 from .xlsx_safe import put, text
 
@@ -87,7 +88,7 @@ def sheet_key(s) -> str:
     return f"{s['w']:g}x{s['l']:g}"
 
 
-def build_pricing_xlsx(project) -> bytes:
+def build_pricing_xlsx(project, lang: str = "th") -> bytes:
     res = project.price()
     P, meta = res["pricing"], res["meta"]
     mats = {m["id"]: m for m in project.store.data["materials"]}
@@ -112,7 +113,7 @@ def build_pricing_xlsx(project) -> bytes:
     xr = {}
     r = 5
     for k, e in enumerate(P["extras"]):
-        _put(N, (r, 1), text(e["name"]), font=F_CELL)
+        _put(N, (r, 1), text(tr_exact(e["name"], lang)), font=F_CELL)
         _put(N, (r, 2), e["rate"], fill=YELLOW, fmt=ACC2)
         _put(N, (r, 3), EXTRA_UNITS[e["unit"]], font=F_CELL, align=CENTER)
         _put(N, (r, 4), 1 if e["on"] else 0, fill=YELLOW, align=CENTER)
@@ -194,7 +195,7 @@ def build_pricing_xlsx(project) -> bytes:
         D.column_dimensions[COL(ex0 + i)].width = 12
     D.column_dimensions[COL(note_col)].width = 40
     _put(D, "A1", f"ใบคิดราคา {project.job_name}", font=Font(name=ANG, size=18, bold=True), border=None)
-    _put(D, "A2", text(f"{meta.get('customer') or ''}  วันที่ {date}".strip()), font=F_CELL, border=None)
+    _put(D, "A2", text(f"{meta.get('customer') or ''}  {tr('วันที่', lang)} {date}".strip()), font=F_CELL, border=None)
     D.merge_cells("R1:T1")
     D.merge_cells("R2:T2")
     _put(D, "R1", "เผื่อที่ clamp & วางแบบ", font=F_NUMB, fill=GREY, align=CENTER, border=HBOX)
@@ -225,7 +226,7 @@ def build_pricing_xlsx(project) -> bytes:
     _head(D, f"{PL}4", "ชุบ\n(1/0)", fill=YELLOW, merge=f"{PL}4:{PL}5")
     for i, (k, e) in enumerate(extras):
         L = COL(ex0 + i)
-        _head(D, f"{L}4", text(f"{e['name']}\n({e['rate']:g}/{EXTRA_UNITS[e['unit']]})"), fill=GREY, merge=f"{L}4:{L}5")
+        _head(D, f"{L}4", text(f"{tr_exact(e['name'], lang)}\n({e['rate']:g}/{tr(EXTRA_UNITS[e['unit']], lang)})"), fill=GREY, merge=f"{L}4:{L}5")
     _head(D, f"{COL(ex_total)}4", "ค่าใช้จ่ายอื่น\n/ชิ้น", fill=GREY, merge=f"{COL(ex_total)}4:{COL(ex_total)}5")
     _head(D, f"{COL(use_col)}4", "การใช้แผ่นเหล็ก", fill=GREY, merge=f"{COL(use_col)}4:{COL(use_col + 2)}4")
     _head(D, f"{COL(use_col)}5", "ใช้ (%)", fill=GREY)
@@ -398,7 +399,7 @@ def build_pricing_xlsx(project) -> bytes:
         if e["unit"] != "job":
             continue
         rate, on = xr[e_i]
-        _put(S, (r, 1), text(e["name"]), font=F_CELL)
+        _put(S, (r, 1), text(tr_exact(e["name"], lang)), font=F_CELL)
         _put(S, (r, 2), "ต่องาน", font=F_CELL, align=CENTER)
         _put(S, (r, 9), f"=IF({on}=1,{rate},0)", fill=GOLD, fmt=ACC2)
         job_rows.append(r)
@@ -437,7 +438,7 @@ def build_pricing_xlsx(project) -> bytes:
         for p in excl:
             _put(S, (r, 1), text(p.name), font=F_CELL)
             _put(S, (r, 2), p.qty, align=CENTER)
-            _put(S, (r, 3), text(p.category or p.auto_reason or "ผู้ใช้เลือกไม่ตัด"), font=F_CELL)
+            _put(S, (r, 3), text(p.category or tr(p.auto_reason or "ผู้ใช้เลือกไม่ตัด", lang)), font=F_CELL)
             S.merge_cells(start_row=r, start_column=3, end_row=r, end_column=8)
             r += 1
 
@@ -467,6 +468,7 @@ def build_pricing_xlsx(project) -> bytes:
          font=F_CELL, border=None)
 
     wb.calculation.fullCalcOnLoad = True
+    translate_workbook(wb, lang)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

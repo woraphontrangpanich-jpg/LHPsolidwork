@@ -136,9 +136,13 @@ def main():
     shutil.copy(web / "press.js", DOCS / "press.js")
     shutil.copy(web / "pressview.js", DOCS / "pressview.js")
     shutil.copy(web / "planworker.js", DOCS / "planworker.js")
+    shutil.copy(web / "i18n.js", DOCS / "i18n.js")
+    shutil.copy(web / "i18n-en.js", DOCS / "i18n-en.js")
     shutil.copytree(web / "vendor", DOCS / "vendor")
     html = (web / "index.html").read_text(encoding="utf-8")
     html = html.replace('href="/static/style.css"', 'href="style.css"')
+    html = html.replace('<script src="/static/i18n-en.js" defer></script>', '<script src="i18n-en.js" defer></script>')
+    html = html.replace('<script src="/static/i18n.js" defer></script>', '<script src="i18n.js" defer></script>')
     html = html.replace('<script src="/static/app.js" defer></script>',
                         f'<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "{__version__}";</script>\n'
                         '<script src="app.js" defer></script>')

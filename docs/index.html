@@ -68,6 +68,10 @@
       <button type="button" role="menuitemradio" data-theme-pick="auto" aria-checked="false"><span>อัตโนมัติ (ตาม Windows)</span></button>
       <button type="button" role="menuitemradio" data-theme-pick="light" aria-checked="false"><span>สว่าง</span></button>
       <button type="button" role="menuitemradio" data-theme-pick="dark" aria-checked="false"><span>มืด</span></button>
+      <hr>
+      <p class="menu-label">Language / ภาษา</p>
+      <button type="button" role="menuitemradio" data-lang-pick="th" aria-checked="true"><span>ไทย</span></button>
+      <button type="button" role="menuitemradio" data-lang-pick="en" aria-checked="false"><span>English</span></button>
     </div>
   </div>
 </header>
@@ -326,7 +330,9 @@
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "1.4.0";</script>
+<script src="i18n-en.js" defer></script>
+<script src="i18n.js" defer></script>
+<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "1.5.0";</script>
 <script src="app.js" defer></script>
 </body>
 </html>
