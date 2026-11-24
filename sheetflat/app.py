@@ -13,8 +13,8 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.dxf_export import build_dxf, dxf_bytes
@@ -26,6 +26,7 @@ from .core.sw_convert import SolidWorksUnavailable, convert_to_step, solidworks_
 from .core.i18n import fname, norm
 from .core.xlsx_export import build_xlsx
 from .core.pricing_xlsx import build_pricing_xlsx
+from .core import access
 
 import os
 import time
@@ -48,6 +49,15 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"} | {
     h.strip().lower() for h in os.environ.get("SHEETFLAT_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
 store = ProfileStore(DATA / "profiles.json")
+ACCESS = access.Access(DATA / "access.json")
+# the installed program keeps a copy of the Setup.exe it came from (installer/sheetflat.iss); a staff
+# installer carries the owner's codes at its end, which this PC takes over the first time
+SETUP_COPY = ROOT.parent.parent / "setup" / "SheetFlat-Setup.exe"
+if SETUP_COPY.is_file():
+    try:
+        ACCESS.import_from_installer(SETUP_COPY)
+    except OSError:
+        traceback.print_exc()
 jobs: "OrderedDict[str, Project]" = OrderedDict()
 MAX_JOBS = 8
 
@@ -88,12 +98,104 @@ async def local_only(request, call_next):
         if origin is not None and request.method not in ("GET", "HEAD", "OPTIONS") \
                 and _hostname(origin) not in LOCAL_HOSTS:
             return PlainTextResponse("SheetFlat: request from another site blocked", status_code=403)
-    response = await call_next(request)
     path = request.url.path
+    request.state.role = access.role_from_token(request.cookies.get(access.COOKIE))
+    if access.needs_login(path) and request.state.role is None:
+        return J({"detail": "กรุณาใส่รหัสเข้าใช้งาน", "login": True}, status_code=401)
+    if access.owner_only(path) and request.state.role != access.OWNER:
+        return J({"detail": "ไม่พบ"}, status_code=404)
+    response = await call_next(request)
     if path == "/" or path.startswith("/static/"):
         # the page and its scripts must always match (after an update an old cached page would break)
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+def _is_owner(request: Request) -> bool:
+    return getattr(request.state, "role", None) == access.OWNER
+
+
+def _no_prices(data: dict) -> dict:
+    """Store data for staff: without the prices."""
+    return {k: v for k, v in data.items() if k != "pricing"}
+
+
+# ------------------------------------------------------------------ login
+@app.post("/api/login")
+def login(body: dict):
+    role = ACCESS.role_for_code(str(body.get("code") or "")[:100])
+    if role is None:
+        time.sleep(0.6)                       # slows down guessing
+        raise HTTPException(401, "รหัสไม่ถูกต้อง")
+    return _logged_in(role)
+
+
+def _logged_in(role: str) -> J:
+    resp = J({"ok": True, "owner": role == access.OWNER})
+    resp.set_cookie(access.COOKIE, access.make_token(role), httponly=True, samesite="strict",
+                    secure=CLOUD, path="/")
+    return resp
+
+
+def _codes(body: dict):
+    try:
+        ACCESS.set_codes(str(body.get("staff") or ""), str(body.get("owner") or ""))
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+
+
+@app.post("/api/access/setup")
+def access_setup(body: dict):
+    """First start of a fresh install: whoever opens it sets the owner and staff codes."""
+    if CLOUD or ACCESS.from_env():
+        raise HTTPException(403, "รหัสของเซิร์ฟเวอร์นี้ตั้งไว้แล้ว")
+    if ACCESS.configured():
+        raise HTTPException(409, "ตั้งรหัสไว้แล้ว")
+    _codes(body)
+    return _logged_in(access.OWNER)
+
+
+@app.put("/api/access")
+def access_change(body: dict):
+    """Owner: new owner and staff codes (staff installers made earlier keep the old codes)."""
+    if ACCESS.from_env():
+        raise HTTPException(403, "รหัสของเซิร์ฟเวอร์นี้ตั้งจากค่า SHEETFLAT_STAFF_CODE / SHEETFLAT_OWNER_CODE")
+    _codes(body)
+    return {"ok": True}
+
+
+@app.get("/api/access/installer")
+def staff_installer():
+    """Owner: this program's Setup.exe with this PC's codes added, for the staff to install."""
+    if not SETUP_COPY.is_file():
+        raise HTTPException(404, "สร้างตัวติดตั้งได้เฉพาะโปรแกรมที่ติดตั้งด้วย SheetFlat-Setup.exe")
+    try:
+        tail = ACCESS.block()
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    size = access.installer_size(SETUP_COPY)
+
+    def chunks():
+        left = size
+        with open(SETUP_COPY, "rb") as f:
+            while left > 0:
+                b = f.read(min(1 << 20, left))
+                if not b:
+                    break
+                left -= len(b)
+                yield b
+        yield tail
+
+    return StreamingResponse(chunks(), media_type="application/vnd.microsoft.portable-executable", headers={
+        "Content-Disposition": 'attachment; filename="SheetFlat-Setup.exe"',
+        "Content-Length": str(size + len(tail))})
+
+
+@app.post("/api/logout")
+def logout():
+    resp = J({"ok": True})
+    resp.delete_cookie(access.COOKIE, path="/")
+    return resp
 
 
 def _expire_jobs():
@@ -215,13 +317,16 @@ JOB_EXT = "sheetflat"
 
 
 @app.get("/api/jobs/{jid}/save")
-def save_job(jid: str):
+def save_job(jid: str, request: Request):
     """One file with the STEP model and every decision, to reopen later or send to someone else."""
     pr = get_job(jid)
     with pr.lock:
         if not pr.source_path or not Path(pr.source_path).is_file():
             raise HTTPException(400, "บันทึกงานไม่ได้ เพราะไม่มีไฟล์ STEP ต้นฉบับในเครื่องแล้ว กรุณาเปิดไฟล์ใหม่")
         st = pr.state()
+        if not _is_owner(request):
+            st.pop("pricing", None)
+            st.pop("pricing_meta", None)
         st["step_name"] = Path(pr.source_path).name
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -349,7 +454,7 @@ def move_parts(jid: str, body: dict):
 
 
 @app.post("/api/jobs/{jid}/materials")
-def add_material(jid: str, body: dict):
+def add_material(jid: str, body: dict, request: Request):
     """A new steel type from the "move parts" bar, saved for later jobs.
 
     body = {"material": {"id", "name", "prefix"}, "base": "ZN" | "",
@@ -377,7 +482,7 @@ def add_material(jid: str, body: dict):
     if prof is not None:
         prof["table"] = [x for x in prof["table"] if x.get("material") != mid] + rows
     base = str(body.get("base") or "")
-    price = body.get("price_kg")
+    price = body.get("price_kg") if _is_owner(request) else None
     try:
         price = float(price) if price not in (None, "") else None
     except (TypeError, ValueError):
@@ -403,7 +508,7 @@ def add_material(jid: str, body: dict):
             job.recompute()
         except Exception:   # noqa
             traceback.print_exc()
-    return {"profiles": store.data, "project": pr.to_json()}
+    return {"profiles": store.data if _is_owner(request) else _no_prices(store.data), "project": pr.to_json()}
 
 
 @app.post("/api/jobs/{jid}/rename")
@@ -496,8 +601,9 @@ def group_layout(jid: str, gid: str, idx: int):
 
 
 # ------------------------------------------------------------------ profiles
-def _profiles_payload() -> dict:
-    return {**store.data, "bend_file": {"name": store.bend_path.name, "path": str(store.bend_path),
+def _profiles_payload(request: Request) -> dict:
+    data = store.data if _is_owner(request) else _no_prices(store.data)
+    return {**data, "bend_file": {"name": store.bend_path.name, "path": str(store.bend_path),
                                         "error": store.bend_error}}
 
 
@@ -510,14 +616,16 @@ def _recompute_jobs():
 
 
 @app.get("/api/profiles")
-def get_profiles():
+def get_profiles(request: Request):
     if store.refresh():                # the Excel workbook was edited outside the program
         _recompute_jobs()
-    return _profiles_payload()
+    return _profiles_payload(request)
 
 
 @app.put("/api/profiles")
-def put_profiles(body: dict):
+def put_profiles(body: dict, request: Request):
+    if not _is_owner(request):
+        body = _no_prices(body)        # staff never sees the prices, so never changes them
     try:
         store.replace(body)
     except PermissionError:
@@ -525,7 +633,7 @@ def put_profiles(body: dict):
     except (ValueError, KeyError) as ex:
         raise HTTPException(400, f"ข้อมูลโหมดค่ายืดไม่ถูกต้อง: {ex}")
     _recompute_jobs()
-    return _profiles_payload()
+    return _profiles_payload(request)
 
 
 @app.get("/api/profiles/xlsx")
@@ -548,7 +656,7 @@ def download_bend_xlsx(lang: str = ""):
 
 
 @app.post("/api/profiles/xlsx")
-async def upload_bend_xlsx(file: UploadFile = File(...)):
+async def upload_bend_xlsx(request: Request, file: UploadFile = File(...)):
     """Replace the bend tables with a workbook (one sheet = one mode). Checked before it is accepted."""
     raw = await file.read(5 * 1024 * 1024 + 1)
     if len(raw) > 5 * 1024 * 1024:
@@ -574,7 +682,7 @@ async def upload_bend_xlsx(file: UploadFile = File(...)):
     store._read_workbook()
     store.save()
     _recompute_jobs()
-    return _profiles_payload()
+    return _profiles_payload(request)
 
 
 # ------------------------------------------------------------------ export
@@ -616,7 +724,7 @@ def export_pricing(jid: str, lang: str = ""):
 
 
 @app.get("/api/jobs/{jid}/export/all")
-def export_all(jid: str, lang: str = ""):
+def export_all(jid: str, request: Request, lang: str = ""):
     pr = get_job(jid)
     buf = io.BytesIO()
     with pr.lock, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -624,7 +732,8 @@ def export_all(jid: str, lang: str = ""):
             for s in g.sheets:
                 z.writestr(pr.sheet_filename(g, s.index) + ".dxf", _dxf_for(pr, g, s.index))
         z.writestr(f"{pr.job_name}_{fname('summary', lang)}.xlsx", build_xlsx(pr, lang))
-        z.writestr(f"{pr.job_name}_{fname('price', lang)}.xlsx", build_pricing_xlsx(pr, lang))
+        if _is_owner(request):
+            z.writestr(f"{pr.job_name}_{fname('price', lang)}.xlsx", build_pricing_xlsx(pr, lang))
     return _attach(buf.getvalue(), f"{pr.job_name}_DXF.zip", "application/zip")
 
 
@@ -636,9 +745,14 @@ def export_steps(jid: str, lang: str = ""):
 
 
 @app.get("/api/info")
-def info():
+def info(request: Request):
     from . import __version__
-    return {"solidworks": solidworks_available(), "cloud": CLOUD, "max_upload_mb": MAX_UPLOAD_MB, "version": __version__}
+    role = getattr(request.state, "role", None)
+    return {"solidworks": solidworks_available(), "cloud": CLOUD, "max_upload_mb": MAX_UPLOAD_MB, "version": __version__,
+            "logged_in": role is not None, "owner": role == access.OWNER,
+            "setup_needed": not CLOUD and not ACCESS.configured(),
+            "installer": role == access.OWNER and SETUP_COPY.is_file() and not ACCESS.from_env(),
+            "codes_fixed": ACCESS.from_env()}
 
 
 @app.get("/healthz")

@@ -88,8 +88,12 @@ def main():
     step = DEMO / "DemoCabinet.step"
     build_step(step)
 
+    import os
+    os.environ["SHEETFLAT_STAFF_CODE"] = "demo-staff"      # build-time only codes; never on a real install
+    os.environ["SHEETFLAT_OWNER_CODE"] = "demo-owner"
     from sheetflat.app import app
     c = TestClient(app)
+    assert c.post("/api/login", json={"code": "demo-owner"}).status_code == 200   # owner: the demo shows pricing
     jid = c.post("/api/open-path", json={"path": str(step), "material": "ZN"}).json()["id"]
     for _ in range(200):
         j = c.get(f"/api/jobs/{jid}").json()
@@ -138,9 +142,11 @@ def main():
     shutil.copy(web / "planworker.js", DOCS / "planworker.js")
     shutil.copy(web / "i18n.js", DOCS / "i18n.js")
     shutil.copy(web / "i18n-en.js", DOCS / "i18n-en.js")
+    shutil.copy(web / "icon.png", DOCS / "icon.png")
     shutil.copytree(web / "vendor", DOCS / "vendor")
     html = (web / "index.html").read_text(encoding="utf-8")
     html = html.replace('href="/static/style.css"', 'href="style.css"')
+    html = html.replace('href="/static/icon.png"', 'href="icon.png"')
     html = html.replace('<script src="/static/i18n-en.js" defer></script>', '<script src="i18n-en.js" defer></script>')
     html = html.replace('<script src="/static/i18n.js" defer></script>', '<script src="i18n.js" defer></script>')
     html = html.replace('<script src="/static/app.js" defer></script>',

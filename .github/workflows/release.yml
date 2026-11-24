@@ -1,7 +1,7 @@
-name: Release the Windows ZIP
+name: Release the Windows installer and ZIP
 
 # Push a version tag to publish:   git tag v1.0.0 && git push origin v1.0.0
-# The ZIP is built here on GitHub (not on anyone's PC), tested, signed with a build
+# Setup.exe and the ZIP are built here on GitHub (not on anyone's PC), tested, signed with a build
 # provenance attestation and attached to a GitHub Release. A published release never changes.
 on:
   push:
@@ -26,10 +26,15 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Tests
         run: python -m pytest -q
-      - name: Build and smoke-test the ZIP
+      - name: Inno Setup (builds Setup.exe)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build and smoke-test the ZIP, then build Setup.exe
         env:
           SHEETFLAT_VERSION: ${{ github.ref_name }}
-        run: python tools/build_portable.py --test
+        run: |
+          python tools/build_portable.py --test --installer
       # the signing service (Sigstore) sometimes fails for a moment ("error fetching tlog entry"):
       # try again once before giving up; the release is never published without an attestation
       - name: Attest build provenance
@@ -37,7 +42,9 @@ jobs:
         continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/SheetFlat-windows.zip
+          subject-path: |
+            dist/SheetFlat-Setup.exe
+            dist/SheetFlat-windows.zip
       - name: Wait before retrying the attestation
         if: steps.attest1.outcome == 'failure'
         shell: bash
@@ -46,20 +53,25 @@ jobs:
         if: steps.attest1.outcome == 'failure'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/SheetFlat-windows.zip
+          subject-path: |
+            dist/SheetFlat-Setup.exe
+            dist/SheetFlat-windows.zip
       - name: Publish the release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          SUM=$(cut -d' ' -f1 dist/SHA256SUMS.txt)
+          SETUP=$(grep ' SheetFlat-Setup.exe$' dist/SHA256SUMS.txt | cut -d' ' -f1)
+          ZIP=$(grep ' SheetFlat-windows.zip$' dist/SHA256SUMS.txt | cut -d' ' -f1)
           cat > notes.md <<EOF
-          ดาวน์โหลด **SheetFlat-windows.zip** แตกไฟล์ แล้วดับเบิลคลิก \`SheetFlat.cmd\`
-          ไม่ต้องติดตั้ง Python หรืออะไรเพิ่ม ใช้งานแบบออฟไลน์ได้
+          ดาวน์โหลด **SheetFlat-Setup.exe** ดับเบิลคลิก กดถัดไปจนเสร็จ แล้วเปิดจากไอคอน SheetFlat
+          ในไฟล์มี Python และทุกอย่างที่โปรแกรมต้องใช้ ไม่ต้องติดตั้งอะไรเพิ่ม ใช้งานแบบออฟไลน์ได้
+          ไม่อยากติดตั้ง: ใช้ **SheetFlat-windows.zip** แตกไฟล์ แล้วดับเบิลคลิก \`SheetFlat.cmd\`
 
-          SHA-256: \`$SUM\`
-          ตรวจใน PowerShell: \`Get-FileHash SheetFlat-windows.zip\`
-          ตรวจว่าสร้างจาก repo นี้จริง: \`gh attestation verify SheetFlat-windows.zip --repo $GITHUB_REPOSITORY\`
+          SHA-256 SheetFlat-Setup.exe: \`$SETUP\`
+          SHA-256 SheetFlat-windows.zip: \`$ZIP\`
+          ตรวจใน PowerShell: \`Get-FileHash SheetFlat-Setup.exe\`
+          ตรวจว่าสร้างจาก repo นี้จริง: \`gh attestation verify SheetFlat-Setup.exe --repo $GITHUB_REPOSITORY\`
           EOF
-          gh release create "$TAG" dist/SheetFlat-windows.zip dist/SHA256SUMS.txt --title "SheetFlat $TAG" --notes-file notes.md
+          gh release create "$TAG" dist/SheetFlat-Setup.exe dist/SheetFlat-windows.zip dist/SHA256SUMS.txt --title "SheetFlat $TAG" --notes-file notes.md

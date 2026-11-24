@@ -43,6 +43,7 @@ async function api(path, opts = {}) {
     path = f;
   }
   const res = await fetch(path, opts);
+  if (res.status === 401 && path !== "/api/login") { location.reload(); throw new Error("กรุณาใส่รหัสเข้าใช้งาน"); }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.detail || msg; } catch (_) { /* ignore */ }
@@ -58,6 +59,72 @@ const sendJSON = async (p, method, body) => (await api(p, { method, headers: { "
 function toast(msg, ms = 2600) {
   const t = $("#toast"); t.textContent = msg; t.hidden = false;
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms);
+}
+
+/* ======================================================================
+   Passcode: staff and owner codes; only the owner sees pricing.
+   The server decides what each login may see; the page only hides what would not work anyway.
+   ====================================================================== */
+let OWNER = true;                                  // the online demo has no login and shows everything
+const isOwner = () => OWNER;
+function setRole(owner) {
+  OWNER = !!owner;
+  document.body.classList.toggle("staff", !OWNER);
+  document.body.classList.add("logged-in");
+}
+function askPasscode() {
+  return new Promise((resolve) => {
+    const land = $("#landing"), box = $("#login"), form = $("#loginForm"), input = $("#loginCode"), err = $("#loginErr"), go = $("#loginGo");
+    land.hidden = true; box.hidden = false;
+    input.focus();
+    input.addEventListener("input", () => (err.hidden = true));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!input.value.trim()) return;
+      go.disabled = true; err.hidden = true;
+      try {
+        const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: input.value }) });
+        if (!r.ok) { err.hidden = false; input.select(); return; }
+        const j = await r.json();
+        box.hidden = true; land.hidden = false; input.value = "";
+        resolve({ owner: j.owner });
+      } catch (_) {
+        err.hidden = false;
+      } finally { go.disabled = false; }
+    });
+  });
+}
+
+/* first start of a fresh install: set the owner and staff codes (the server logs this PC in as the owner) */
+function askSetup() {
+  return new Promise((resolve) => {
+    const land = $("#landing"), box = $("#setupCodes"), form = $("#setupForm"), err = $("#setupErr");
+    land.hidden = true; box.hidden = false;
+    form.elements.owner.focus();
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      try {
+        await sendJSON("/api/access/setup", "POST", { owner: form.elements.owner.value, staff: form.elements.staff.value });
+        box.hidden = true; land.hidden = false; form.reset();
+        resolve();
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+    });
+  });
+}
+function openCodes() {
+  closeMenus();
+  const f = $("#codesForm"); f.reset(); $("#codesErr").hidden = true;
+  $("#codesDlg").showModal(); f.elements.owner.focus();
+}
+async function saveCodes() {
+  const f = $("#codesForm"), err = $("#codesErr");
+  err.hidden = true;
+  try {
+    await sendJSON("/api/access", "PUT", { owner: f.elements.owner.value, staff: f.elements.staff.value });
+    $("#codesDlg").close();
+    toast("เปลี่ยนรหัสแล้ว");
+  } catch (ex) { err.textContent = ex.message; err.hidden = false; }
 }
 
 /* ======================================================================
@@ -277,9 +344,22 @@ async function releaseInfo() {
     const r = await fetch("https://api.github.com/repos/woraphontrangpanich-jpg/LHPsolidwork/releases/latest");
     if (!r.ok) return;
     const rel = await r.json();
-    const a = (rel.assets || []).find((x) => x.name === "SheetFlat-windows.zip");
-    if (!a) return;
-    $("#dlMeta").textContent = `SheetFlat-windows.zip · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
+    const assets = rel.assets || [];
+    let a = assets.find((x) => x.name === "SheetFlat-Setup.exe");
+    if (!a) {
+      // a release from before the installer existed: offer its ZIP instead
+      a = assets.find((x) => x.name === "SheetFlat-windows.zip");
+      if (!a) return;
+      $("#dlZip").href = a.browser_download_url;
+      $("#dlZip").textContent = "ดาวน์โหลด SheetFlat (ZIP)";
+      $("#dlHashCmd").textContent = "Get-FileHash SheetFlat-windows.zip";
+      $("#dlMeta").textContent = `SheetFlat-windows.zip · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
+    } else {
+      $("#dlZip").href = a.browser_download_url;
+      $("#dlZip").textContent = "ดาวน์โหลด SheetFlat";
+      $("#dlHashCmd").textContent = "Get-FileHash SheetFlat-Setup.exe";
+      $("#dlMeta").textContent = `SheetFlat-Setup.exe · เวอร์ชัน ${rel.tag_name} · Windows 10 / 11 (64-bit) · ${Math.round(a.size / 1e6)} MB · มี Python และทุกอย่างที่โปรแกรมต้องใช้ในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม`;
+    }
     const when = new Date(rel.published_at || a.updated_at || a.created_at);
     if (!Number.isNaN(when.getTime())) {
       const th = when.toLocaleString(lang() === "en" ? "en-GB" : "th-TH", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Bangkok" });
@@ -474,7 +554,7 @@ function newSteelHTML(mv) {
     <div class="grid3">
       <label>รหัสเหล็ก<input type="text" id="nsId" value="${esc(mv.id || "")}" placeholder="เช่น SUS" maxlength="12"></label>
       <label>ชื่อ<input type="text" id="nsName" value="${esc(mv.nm || "")}" placeholder="เช่น สแตนเลส (SUS)"></label>
-      <label>ราคา / กก. (บาท)<input type="number" id="nsPrice" min="0" step="0.5" value="${esc(mv.price ?? "")}" placeholder="ตามเหล็กที่อิง"></label>
+      ${isOwner() ? `<label>ราคา / กก. (บาท)<input type="number" id="nsPrice" min="0" step="0.5" value="${esc(mv.price ?? "")}" placeholder="ตามเหล็กที่อิง"></label>` : ""}
     </div>
     <fieldset class="ns-mode"><legend>ค่ายืดของเหล็กนี้</legend>
       <label class="radio-line"><input type="radio" name="nsMode" value="base" ${mv.mode === "base" ? "checked" : ""}> อิงค่ายืดของ
@@ -539,7 +619,7 @@ async function doMove() {
       if (mv.rows.some((r) => !(+r.bd > 0))) throw new Error("ใส่ค่ายืดให้ครบทุกความหนา");
       const r = await sendJSON(`/api/jobs/${S.jobId}/materials`, "POST", {
         material: { id: mv.id, name: mv.nm || mv.id, prefix: mv.id }, base: mv.base,
-        rows: mv.rows.map((x) => ({ thickness: x.thickness, bd: +x.bd, gauge: x.gauge })), price_kg: mv.price === "" ? null : +mv.price });
+        rows: mv.rows.map((x) => ({ thickness: x.thickness, bd: +x.bd, gauge: x.gauge })), price_kg: mv.price === "" || mv.price === undefined ? null : +mv.price });
       S.profilesData = r.profiles; setProject(r.project); fillProfileSelects();
       target = { material_id: mv.id }; label = matName(mv.id);
     } else if (kind === "m") { target = { material_id: val }; label = matName(val); }
@@ -1354,6 +1434,7 @@ async function saveProfiles(ev) {
 const baht = (n, d = 0) => fmt(n, d);
 const UNITS = [["piece", "ต่อชิ้น"], ["bend", "ต่อจุดพับ"], ["hole", "ต่อรู"], ["kg", "ต่อ กก."], ["m2", "ต่อ ตร.ม."], ["job", "ต่องาน (ครั้งเดียว)"]];
 async function openPricing() {
+  if (!isOwner()) return;
   if (!S.jobId) return;
   $("#priceMsg").textContent = "";
   try { S.price = await getJSON(`/api/jobs/${S.jobId}/pricing`); } catch (e) { toast(e.message); return; }
@@ -1495,6 +1576,7 @@ function renderPriceResult() {
   }));
 }
 async function priceXlsx() {
+  if (!isOwner()) return;
   if (DEMO) { download("pricing"); return; }
   clearTimeout(schedulePrice._t);
   if (await pushPrice()) location.href = `/api/jobs/${S.jobId}/export/pricing?lang=${lang()}`;
@@ -1602,6 +1684,7 @@ function newJob() {
   $("#topJob").hidden = true; $("#topActions").hidden = true; $("#file").value = ""; backToLanding("");
 }
 function exportPricing() {
+  if (!isOwner()) return;
   if (!S.project) return;
   if (S.price) priceXlsx();
   else if (DEMO) download("pricing");
@@ -1631,7 +1714,7 @@ const KEYS = [
     ["รูและรัศมีโค้ง", ["H"]], ["มุมเอียง / หน้า / บน / ข้าง", ["1", "2", "3", "4"]]]],
 ];
 function openKeys() {
-  $("#keysBody").innerHTML = KEYS.map(([h, rows]) => `<h3>${esc(h)}</h3>` + rows.map(([t, ks]) =>
+  $("#keysBody").innerHTML = KEYS.map(([h, rows]) => `<h3>${esc(h)}</h3>` + rows.filter(([t]) => isOwner() || t !== "คิดราคา").map(([t, ks]) =>
     `<div class="kr"><span>${esc(t)}</span><span>${ks.map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span></div>`).join("")).join("");
   closeMenus();
   $("#keysDlg").showModal();
@@ -1644,9 +1727,9 @@ function paletteItems() {
   if (P) {
     act("ดาวน์โหลด DXF ทั้งหมด + Excel", () => download("all"), "Ctrl E", "ไฟล์ .zip พร้อมส่งเครื่องเลเซอร์", P.groups.length > 0);
     act("ดาวน์โหลดใบสรุปงาน (Excel)", () => download("xlsx"));
-    act("ดาวน์โหลดใบคิดราคา (Excel)", exportPricing);
+    act("ดาวน์โหลดใบคิดราคา (Excel)", exportPricing, undefined, undefined, isOwner());
     act("ดาวน์โหลด STEP แยกชิ้น (.zip)", () => $("#btnSteps").click());
-    act("คิดราคา", openPricing, "P");
+    act("คิดราคา", openPricing, "P", undefined, isOwner());
     act("บันทึกงาน (.sheetflat)", saveJob, "Ctrl S");
     act("ใบสั่งตัด (ภาพรวม)", () => $("#ovLink").click(), "O");
     act("สลับ 2D / 3D", () => setView3d(!S.view3d), "V", "", onPart());
@@ -1795,7 +1878,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#profileForm").addEventListener("submit", (e) => { if (e.submitter && e.submitter.id === "profileSave") saveProfiles(e); });
   $("#profileSel").addEventListener("change", (e) => patchSettings({ profile: e.target.value }));
   if (DEMO) {
-    document.body.classList.add("demo");
+    document.body.classList.add("demo", "ready");
     window.addEventListener("hashchange", route);
     route();
     try { S.demoFiles = await (await fetch(DEMO + "files.json")).json(); } catch (_) { S.demoFiles = {}; }
@@ -1807,10 +1890,21 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (DEMO) showVer(window.SHEETFLAT_VERSION);
   if (!DEMO) {
     try {
-      const info = await (await fetch("/api/info")).json();
+      let info = await (await fetch("/api/info")).json();
       showVer(info.version);
       if (info.cloud) { document.querySelector(".pathbox").hidden = true; document.body.classList.add("cloud"); }
+      if (info.setup_needed) await askSetup();
+      else if (!info.logged_in) await askPasscode();
+      if (!info.logged_in || info.setup_needed) info = await (await fetch("/api/info")).json();
+      setRole(info.owner);
+      $("#btnStaffSetup").hidden = !info.installer;
+      $("#btnCodes").hidden = !!info.codes_fixed;
     } catch (_) { /* ignore */ }
+    $("#btnCodes").onclick = openCodes;
+    $("#codesSave").onclick = saveCodes;
+    $("#btnStaffSetup").onclick = () => { closeMenus(); location.href = "/api/access/installer"; toast("กำลังสร้างตัวติดตั้งสำหรับพนักงาน ไฟล์ประมาณ 110 MB", 5000); };
+    document.body.classList.add("ready");
+    $("#btnLogout").onclick = async () => { try { await fetch("/api/logout", { method: "POST" }); } catch (_) { /* offline */ } location.href = "/"; };
   }
   try { await initLanding(); } catch (e) { landError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message); }
 });

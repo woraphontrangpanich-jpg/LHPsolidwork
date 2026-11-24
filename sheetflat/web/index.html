@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="/static/icon.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -44,13 +45,13 @@
       <select id="profileSel" hidden aria-hidden="true" tabindex="-1"></select>
     </div>
     <span class="top-sep" aria-hidden="true"></span>
-    <button class="btn" id="btnPrice" type="button">คิดราคา <kbd>P</kbd></button>
+    <button class="btn owner-only" id="btnPrice" type="button">คิดราคา <kbd>P</kbd></button>
     <div class="menu" data-menu="export">
       <button class="btn primary menu-btn" type="button" id="btnExport">ดาวน์โหลด <i class="chev" aria-hidden="true"></i></button>
       <div class="menu-pop menu-wide" role="menu" aria-label="ดาวน์โหลด" hidden>
         <button type="button" role="menuitem" id="btnAll"><span>DXF ทั้งหมด + Excel<small>ไฟล์ .zip พร้อมส่งเครื่องเลเซอร์</small></span><kbd>Ctrl E</kbd></button>
         <button type="button" role="menuitem" id="btnXlsx"><span>ใบสรุปงาน (Excel)</span></button>
-        <button type="button" role="menuitem" id="btnPriceXlsx"><span>ใบคิดราคา (Excel)</span></button>
+        <button type="button" role="menuitem" id="btnPriceXlsx" class="owner-only"><span>ใบคิดราคา (Excel)</span></button>
         <hr>
         <button type="button" role="menuitem" id="btnSteps"><span>STEP แยกชิ้น (.zip)<small>เปิดใน SolidWorks ได้ทีละชิ้น</small></span></button>
       </div>
@@ -72,6 +73,10 @@
       <p class="menu-label">Language / ภาษา</p>
       <button type="button" role="menuitemradio" data-lang-pick="th" aria-checked="true"><span>ไทย</span></button>
       <button type="button" role="menuitemradio" data-lang-pick="en" aria-checked="false"><span>English</span></button>
+      <hr class="login-only">
+      <button type="button" role="menuitem" id="btnCodes" class="owner-only login-only"><span>เปลี่ยนรหัสเข้าใช้งาน…</span></button>
+      <button type="button" role="menuitem" id="btnStaffSetup" class="owner-only login-only" hidden><span>สร้างตัวติดตั้งสำหรับพนักงาน<small>Setup.exe ที่ใช้รหัสของเครื่องนี้</small></span></button>
+      <button type="button" role="menuitem" id="btnLogout" class="login-only"><span>ออกจากระบบ</span></button>
     </div>
   </div>
 </header>
@@ -81,6 +86,33 @@
   <a href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/blob/main/INSTALL.md" target="_blank" rel="noopener">วิธีติดตั้งในเครื่อง</a>
 </div>
 <!-- ============ landing ============ -->
+<!-- ============ passcode ============ -->
+<main id="login" class="login" hidden>
+  <form class="login-card" id="loginForm" autocomplete="off">
+    <svg viewBox="0 0 28 28" width="40" height="40" aria-hidden="true"><path d="M3 8h22v12H3z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 8v12M17 8v12" stroke="var(--bend)" stroke-width="1.6" stroke-dasharray="2.5 2"/></svg>
+    <h1>ใส่รหัสเข้าใช้งาน</h1>
+    <label for="loginCode" class="sr-only">รหัสเข้าใช้งาน</label>
+    <input type="password" id="loginCode" placeholder="รหัสเข้าใช้งาน" required spellcheck="false" autocapitalize="off">
+    <p class="login-err" id="loginErr" role="alert" hidden>รหัสไม่ถูกต้อง ลองใหม่อีกครั้ง</p>
+    <button class="btn primary" type="submit" id="loginGo">เข้าใช้งาน</button>
+  </form>
+</main>
+
+<!-- ============ first start: set the passcodes ============ -->
+<main id="setupCodes" class="login" hidden>
+  <form class="login-card setup-card" id="setupForm" autocomplete="off">
+    <h1>ตั้งรหัสเข้าใช้งาน</h1>
+    <p class="setup-lede">เปิดโปรแกรมครั้งแรก ตั้งรหัส 2 แบบก่อนเริ่มใช้งาน</p>
+    <label class="code-field"><span>รหัสเจ้าของ<small>ใช้ได้ทุกอย่าง รวมถึงคิดราคา</small></span>
+      <input type="text" name="owner" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+    <label class="code-field"><span>รหัสพนักงาน<small>ใช้ได้ทุกอย่าง ยกเว้นคิดราคา</small></span>
+      <input type="text" name="staff" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+    <p class="login-err" id="setupErr" role="alert" hidden></p>
+    <button class="btn primary" type="submit">บันทึกรหัส</button>
+    <p class="setup-hint">หน้าเข้าใช้งานจะมีช่องใส่รหัสช่องเดียว พนักงานจึงไม่รู้ว่ามีรหัส 2 แบบ อยากให้พนักงานติดตั้งโดยใช้รหัสเดียวกับเครื่องนี้ ให้ไปที่เมนู ⋯ → สร้างตัวติดตั้งสำหรับพนักงาน</p>
+  </form>
+</main>
+
 <main id="landing" class="landing">
   <section class="land-grid">
     <div class="land-copy">
@@ -157,22 +189,23 @@
     <h1>ดาวน์โหลด SheetFlat ไปใช้ในเครื่อง</h1>
     <p class="lede">เวอร์ชันในเครื่องคลี่ไฟล์ STEP ของคุณได้จริง ใช้ได้ทุกฟังก์ชัน และไฟล์งานของลูกค้าไม่ถูกส่งขึ้นอินเทอร์เน็ต</p>
     <div class="dl-card">
-      <a class="btn primary dl-btn" id="dlZip" href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/releases/latest/download/SheetFlat-windows.zip">ดาวน์โหลด SheetFlat (ZIP)</a>
-      <p class="dl-meta" id="dlMeta">SheetFlat-windows.zip · Windows 10 / 11 (64-bit) · ประมาณ 180 MB · มีทุกอย่างในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม</p>
+      <a class="btn primary dl-btn" id="dlZip" href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/releases/latest/download/SheetFlat-Setup.exe">ดาวน์โหลด SheetFlat</a>
+      <p class="dl-meta" id="dlMeta">SheetFlat-Setup.exe · Windows 10 / 11 (64-bit) · ประมาณ 110 MB · มี Python และทุกอย่างที่โปรแกรมต้องใช้ในไฟล์เดียว ไม่ต้องติดตั้งอะไรเพิ่ม</p>
       <p class="dl-date" id="dlDate" hidden></p>
     </div>
     <ol class="steps dl-steps">
-      <li><h2>แตกไฟล์ ZIP</h2>
-        <p>คลิกขวาที่ไฟล์ที่ดาวน์โหลดมา เลือก <b>Extract All… (แตกไฟล์ทั้งหมด)</b> แล้วเลือกที่เก็บ เช่น <code>D:\</code> จะได้โฟลเดอร์ชื่อ <b>SheetFlat</b></p></li>
-      <li><h2>ดับเบิลคลิก SheetFlat.cmd</h2>
-        <p>ครั้งแรก Windows จะถามว่าจะเปิดไฟล์จากอินเทอร์เน็ตไหม ให้กด <b>Run (เรียกใช้)</b> ถ้าขึ้นหน้าจอสีน้ำเงิน “Windows protected your PC” ให้กด <b>More info</b> แล้วกด <b>Run anyway</b> หน้าจอนี้ขึ้นกับโปรแกรมที่ยังไม่มีใบรับรองผู้พัฒนา</p></li>
-      <li><h2>เริ่มใช้งาน</h2>
-        <p>เบราว์เซอร์จะเปิดหน้า SheetFlat ให้เองภายในไม่กี่วินาที ห้ามปิดหน้าต่างสีดำระหว่างใช้งาน อยากได้ไอคอนบนหน้าจอ ให้คลิกขวาที่ <code>SheetFlat.cmd</code> แล้วเลือก <b>Send to → Desktop</b></p></li>
+      <li><h2>ดับเบิลคลิกไฟล์ที่ดาวน์โหลดมา</h2>
+        <p>ถ้าขึ้นหน้าจอสีน้ำเงิน “Windows protected your PC” ให้กด <b>More info</b> แล้วกด <b>Run anyway</b> หน้าจอนี้ขึ้นกับโปรแกรมที่ยังไม่มีใบรับรองผู้พัฒนา</p></li>
+      <li><h2>กดถัดไปจนเสร็จ</h2>
+        <p>ใช้เวลาไม่ถึงนาที ไม่ต้องใช้สิทธิ์ผู้ดูแลระบบ และไม่ต้องต่ออินเทอร์เน็ต</p></li>
+      <li><h2>เปิดจากไอคอน SheetFlat</h2>
+        <p>ไอคอนอยู่บนหน้าจอและในเมนู Start โปรแกรมเปิดในหน้าต่างของตัวเอง ปิดหน้าต่างเมื่อเลิกใช้งาน</p></li>
     </ol>
     <div class="dl-more">
-      <p><b>ปลอดภัยอย่างไร:</b> ไฟล์ ZIP สร้างโดย GitHub Actions จากโค้ดใน repo นี้ ทุกเวอร์ชันล็อกไว้ไม่เปลี่ยนภายหลัง ไม่มีสคริปต์ดาวน์โหลดโค้ดมารันเพิ่ม และโปรแกรมทำงานในเครื่องเท่านั้น ไม่ส่งไฟล์งานขึ้นอินเทอร์เน็ต</p>
-      <p id="dlHash" hidden><b>ตรวจไฟล์ (SHA-256):</b> <code id="dlHashVal"></code><br>เปิด PowerShell แล้วพิมพ์ <code>Get-FileHash SheetFlat-windows.zip</code> ค่าที่ได้ต้องตรงกัน</p>
-      <p><b>อัปเดตเวอร์ชันใหม่:</b> ดาวน์โหลด ZIP ใหม่ แตกไฟล์ทับโฟลเดอร์เดิม ตารางค่ายืดที่ตั้งไว้ไม่หาย</p>
+      <p><b>ปลอดภัยอย่างไร:</b> ไฟล์ติดตั้งสร้างโดย GitHub Actions จากโค้ดใน repo นี้ ทุกเวอร์ชันล็อกไว้ไม่เปลี่ยนภายหลัง ไม่มีสคริปต์ดาวน์โหลดโค้ดมารันเพิ่ม และโปรแกรมทำงานในเครื่องเท่านั้น ไม่ส่งไฟล์งานขึ้นอินเทอร์เน็ต</p>
+      <p id="dlHash" hidden><b>ตรวจไฟล์ (SHA-256):</b> <code id="dlHashVal"></code><br>เปิด PowerShell แล้วพิมพ์ <code id="dlHashCmd">Get-FileHash SheetFlat-Setup.exe</code> ค่าที่ได้ต้องตรงกัน</p>
+      <p><b>อัปเดตเวอร์ชันใหม่:</b> ดาวน์โหลดไฟล์ติดตั้งใหม่แล้วติดตั้งทับได้เลย ตารางค่ายืดและราคาที่ตั้งไว้ไม่หาย</p>
+      <p><b>ไม่อยากติดตั้ง:</b> <a id="dlZipAlt" href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/releases/latest/download/SheetFlat-windows.zip">ดาวน์โหลดแบบ ZIP</a> แตกไฟล์ แล้วดับเบิลคลิก <code>SheetFlat.cmd</code></p>
       <p><a href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/releases" target="_blank" rel="noopener">ทุกเวอร์ชัน</a> · <a href="https://github.com/woraphontrangpanich-jpg/LHPsolidwork/blob/main/INSTALL.md" target="_blank" rel="noopener">คู่มือติดตั้งและแก้ปัญหา</a></p>
     </div>
   </section>
@@ -327,6 +360,27 @@
       <button class="x" value="cancel" aria-label="ปิด">×</button>
     </header>
     <div class="dlg-body keys-body" id="keysBody"></div>
+  </form>
+</dialog>
+
+<dialog id="codesDlg" class="dlg codes-dlg">
+  <form method="dialog" class="dlg-card" id="codesForm" autocomplete="off">
+    <header class="dlg-head">
+      <h2>เปลี่ยนรหัสเข้าใช้งาน</h2>
+      <button class="x" value="cancel" aria-label="ปิด">×</button>
+    </header>
+    <div class="dlg-body codes-body">
+      <label class="code-field"><span>รหัสเจ้าของ<small>ใช้ได้ทุกอย่าง รวมถึงคิดราคา</small></span>
+      <input type="text" name="owner" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+    <label class="code-field"><span>รหัสพนักงาน<small>ใช้ได้ทุกอย่าง ยกเว้นคิดราคา</small></span>
+      <input type="text" name="staff" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+      <p class="hint">เครื่องที่ติดตั้งจากตัวติดตั้งพนักงานอันเก่ายังใช้รหัสเดิม เปลี่ยนรหัสแล้วให้สร้างตัวติดตั้งให้พนักงานใหม่</p>
+      <p class="login-err" id="codesErr" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <button class="btn" value="cancel">ยกเลิก</button>
+      <button class="btn primary" type="button" id="codesSave">บันทึกรหัส</button>
+    </footer>
   </form>
 </dialog>
 

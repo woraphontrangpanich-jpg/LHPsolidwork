@@ -8,6 +8,7 @@ hash in that file) and the SheetFlat code. The customer extracts it and double-c
 SheetFlat.cmd: no installer, no PowerShell, no internet, no administrator rights.
 
 --test  runs the packed program on docs/demo/DemoCabinet.step and checks the result.
+--installer  also builds dist/SheetFlat-Setup.exe with Inno Setup (installer/sheetflat.iss).
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ PY_SHA256 = "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"
 SKIP = {"matplotlib", "contourpy", "cycler", "kiwisolver", "packaging", "pillow",
         "python-dateutil", "tzdata"}
 
-APP_FILES = ["run.py", "LICENSE", "README.md", "INSTALL.md"]
+APP_FILES = ["run.py", "desktop.py", "LICENSE", "README.md", "INSTALL.md"]
 
 
 def sha256(path: Path) -> str:
@@ -198,10 +199,35 @@ def smoke(pkg: Path):
         sys.exit("smoke test failed")
 
 
+def find_iscc() -> str:
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
+        for sub in (r"Programs\Inno Setup 6\ISCC.exe", r"Inno Setup 6\ISCC.exe"):
+            if base and (Path(base) / sub).is_file():
+                return str(Path(base) / sub)
+    found = shutil.which("ISCC")
+    if not found:
+        sys.exit("Inno Setup 6 not found - install it: winget install -e --id JRSoftware.InnoSetup")
+    return found
+
+
+def installer():
+    """dist/SheetFlat-Setup.exe: installs per user, Start menu + desktop icon, uninstall."""
+    subprocess.run([sys.executable, str(ROOT / "tools" / "make_icon.py")], check=True)
+    ver = version()
+    subprocess.run([find_iscc(), f"/DAppVersion={ver}", "/Q", str(ROOT / "installer" / "sheetflat.iss")], check=True)
+    out = DIST / "SheetFlat-Setup.exe"
+    digest = sha256(out)
+    with open(DIST / "SHA256SUMS.txt", "a", encoding="ascii") as fh:
+        fh.write(f"{digest}  {out.name}\n")
+    print(f"built {out}  {out.stat().st_size / 1e6:.0f} MB")
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--test", action="store_true")
+    ap.add_argument("--installer", action="store_true")
     a = ap.parse_args()
     p = build()
     if a.test:
         smoke(p)
+    if a.installer:
+        installer()

@@ -14,17 +14,18 @@ jobs:
         run: docker build -t sheetflat .
       - name: Start container
         run: |
-          docker run -d --name sf -p 8080:8080 sheetflat
+          docker run -d --name sf -p 8080:8080 -e SHEETFLAT_STAFF_CODE=ci-staff -e SHEETFLAT_OWNER_CODE=ci-owner sheetflat
           for i in $(seq 1 60); do curl -sf http://localhost:8080/healthz && break; sleep 2; done
           curl -sf http://localhost:8080/api/info
       - name: Upload the demo assembly and check the result
         run: |
-          ID=$(curl -sf -F "file=@docs/demo/DemoCabinet.step" -F material=ZN http://localhost:8080/api/upload | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          curl -sf -c jar -H "Content-Type: application/json" -d '{"code":"ci-owner"}' http://localhost:8080/api/login
+          ID=$(curl -sf -b jar -F "file=@docs/demo/DemoCabinet.step" -F material=ZN http://localhost:8080/api/upload | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
           for i in $(seq 1 60); do
-            STATE=$(curl -sf http://localhost:8080/api/jobs/$ID | python3 -c "import sys,json;print(json.load(sys.stdin)['state'])")
+            STATE=$(curl -sf -b jar http://localhost:8080/api/jobs/$ID | python3 -c "import sys,json;print(json.load(sys.stdin)['state'])")
             [ "$STATE" = "done" ] || [ "$STATE" = "error" ] && break; sleep 2
           done
-          curl -sf http://localhost:8080/api/jobs/$ID > job.json
+          curl -sf -b jar http://localhost:8080/api/jobs/$ID > job.json
           python3 - <<'PY'
           import json
           j = json.load(open("job.json"))
@@ -33,8 +34,8 @@ jobs:
           print("groups", g)
           assert g == {"ZN#22": 6, "ZN#19": 4, "ZN#14": 5}, g
           PY
-          curl -sf -o all.zip http://localhost:8080/api/jobs/$ID/export/all && ls -l all.zip
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"path":"/etc/passwd"}' http://localhost:8080/api/open-path)" = "403"
+          curl -sf -b jar -o all.zip http://localhost:8080/api/jobs/$ID/export/all && ls -l all.zip
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar -H 'Content-Type: application/json' -d '{"path":"/etc/passwd"}' http://localhost:8080/api/open-path)" = "403"
       - name: Container logs
         if: always()
         run: docker logs sf | tail -50
