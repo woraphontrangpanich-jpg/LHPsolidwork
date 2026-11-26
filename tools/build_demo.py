@@ -89,6 +89,8 @@ def main():
     build_step(step)
 
     import os
+    import tempfile
+    os.environ["SHEETFLAT_DATA"] = tempfile.mkdtemp(prefix="sheetflat_demo_")      # clean data folder: the demo shows the shipped defaults
     os.environ["SHEETFLAT_STAFF_CODE"] = "demo-staff"      # build-time only codes; never on a real install
     os.environ["SHEETFLAT_OWNER_CODE"] = "demo-owner"
     from sheetflat.app import app

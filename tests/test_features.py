@@ -49,9 +49,9 @@ def test_move_parts_between_groups_and_to_a_custom_group(client, job):
     h = next(p for p in P["parts"] if p["id"] == hook["id"])
     assert not h["include"] and h["category"] == "ซื้อสำเร็จรูป"
     assert "Hook" not in sum(groups(P).values(), [])
-    # Front (ZN 0.7) -> ST: a new ST#22 group
-    P = client.post(f"/api/jobs/{jid}/move", json={"ids": [front["id"]], "target": {"material_id": "ST", "thickness": 0.7}}).json()
-    assert groups(P)["ST#22"] == ["Front"]
+    # Front (ZN 0.7) -> AL: a new AL#22 group
+    P = client.post(f"/api/jobs/{jid}/move", json={"ids": [front["id"]], "target": {"material_id": "AL", "thickness": 0.7}}).json()
+    assert groups(P)["AL#22"] == ["Front"]
     # Hook back into ZN 2.0
     P = client.post(f"/api/jobs/{jid}/move", json={"ids": [hook["id"]], "target": {"material_id": "ZN", "thickness": 2.0}}).json()
     assert "Hook" in groups(P)["ZN#14"]
@@ -86,7 +86,7 @@ def test_pricing_follows_the_workbook_formulas(client, job):
     assert r2["meta"]["customer"] == "ลูกค้า ก"
     # prices follow the bend table thicknesses: ZN#22 (0.7) and ZN#14 (2.0) exist
     codes = {(x["material"], x["thickness"]) for x in r2["pricing"]["prices"]}
-    assert ("ZN", 0.7) in codes and ("ZN", 2.0) in codes and ("ST", 3.0) in codes
+    assert ("ZN", 0.7) in codes and ("ZN", 2.0) in codes and ("AL", 3.0) in codes
     # a per-job extra is added once, a per-hole extra per hole
     pr = r2["pricing"]
     pr["markup_pct"] = 0

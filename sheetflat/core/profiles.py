@@ -27,7 +27,6 @@ SHIPPED_BEND_XLSX = Path(__file__).resolve().parent.parent / "bend_tables.xlsx" 
 
 DEFAULT_MATERIALS = [
     {"id": "ZN", "name": "เหล็กซิงค์ (ZN)", "prefix": "ZN"},
-    {"id": "ST", "name": "เหล็กขาว (ST)", "prefix": "ST"},
     {"id": "SUSHairline", "name": "สแตนเลส Hairline", "prefix": "SUSHairline"},
     {"id": "SUS", "name": "สแตนเลส", "prefix": "SUS"},
     {"id": "AL", "name": "อลูมิเนียม", "prefix": "AL"},
@@ -58,12 +57,12 @@ DEFAULT_PROFILE = {
 }
 
 # Price list (the "ราคาเหล็ก" sheet of the shop's สูตรคิดราคา workbook), one row per steel and
-# bend-table thickness, keyed like the DXF files (ZN#22, ZN#3mm, ST#14 ...).
+# bend-table thickness, keyed like the DXF files (ZN#22, ZN#3mm, SUS#14 ...).
 #   kg_plate  weight of one 1220 x 2440 sheet AT THIS ROW'S THICKNESS (ZN 0.7 mm = 16.8 kg)
 #   price_kg  baht per kg
 # Rows are added automatically for every steel x thickness in the bend table (and in the job).
 STEEL_DEFAULTS = {          # first values for a new row: (price/kg below 3 mm, from 3 mm, kg of 1220x2440 sheet per mm)
-    "ZN": (35, 45, 24), "ST": (45, 45, 24), "AL": (150, 150, 8), "SUS": (120, 120, 23),
+    "ZN": (35, 45, 24), "AL": (150, 150, 8), "SUS": (120, 120, 23),
     "SUSHairline": (120, 120, 23), "ALA": (150, 150, 8),     # same as SUS / AL until the shop types its own price
 }
 EXTRA_UNITS = {             # how an extra cost is counted
@@ -379,7 +378,7 @@ def match_row(profile: dict, thickness: float, material_id: str | None = None):
 
 
 def material_code(material: dict, row: dict | None, thickness: float) -> str:
-    """e.g. ZN#22 / ST#3mm / ZN#4mm (when the thickness is not in the table)."""
+    """e.g. ZN#22 / SUS#3mm / ZN#4mm (when the thickness is not in the table)."""
     if row is not None and row.get("gauge"):
         return f"{material['prefix']}{row['gauge']}"
     return f"{material['prefix']}#{thickness:g}mm"

@@ -70,9 +70,9 @@ def test_dxf_download_is_valid(client, job):
 def test_material_change_regroups(client, job):
     jid, p = job
     pid = next(x["id"] for x in p["parts"] if x["name"] == "Hood2")
-    p2 = client.patch(f"/api/jobs/{jid}/parts/{pid}", json={"material_id": "ST"}).json()
+    p2 = client.patch(f"/api/jobs/{jid}/parts/{pid}", json={"material_id": "AL"}).json()
     codes = {g["code"] for g in p2["groups"]}
-    assert "ST#22" in codes and "ZN#22" in codes
+    assert "AL#22" in codes and "ZN#22" in codes
     p3 = client.patch(f"/api/jobs/{jid}/parts/{pid}", json={"material_id": "ZN"}).json()
     assert {g["code"] for g in p3["groups"]} == {"ZN#22", "ZN#14"}
 
@@ -88,7 +88,7 @@ def test_excel_and_zip(client, job):
 
 def test_upload_multipart_and_sldasm_message(client):
     with open(SAMPLE, "rb") as fh:
-        r = client.post("/api/upload", files={"file": ("Assem.STEP", fh)}, data={"material": "ST"})
+        r = client.post("/api/upload", files={"file": ("Assem.STEP", fh)}, data={"material": "AL"})
     assert r.status_code == 200
     jid = r.json()["id"]
     for _ in range(100):
@@ -97,7 +97,7 @@ def test_upload_multipart_and_sldasm_message(client):
             break
         time.sleep(0.3)
     assert j["state"] == "done"
-    assert {g["code"] for g in j["project"]["groups"]} == {"ST#22", "ST#14"}
+    assert {g["code"] for g in j["project"]["groups"]} == {"AL#22", "AL#14"}
     bad = client.post("/api/upload", files={"file": ("x.sldasm", b"not real")})
     assert bad.status_code == 400 and "STEP" in bad.json()["detail"]
     junk = client.post("/api/upload", files={"file": ("x.txt", b"hello")})

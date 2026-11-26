@@ -481,7 +481,6 @@ window.SF_EN = {
 "เพิ่มโหมดใหม่": "Add a new mode",
 "เมนูเพิ่มเติม": "More menu",
 "เส้นโค้งอิสระ": "Free-form curve",
-"เหล็กขาว (ST)": "White steel (ST)",
 "แบบ) · ไม่ตัด": "designs) · not cut",
 "แสดงบนแบบคลี่": "Show on the flat pattern",
 "ใหญ่เกินแผ่น)": "larger than the sheet)",

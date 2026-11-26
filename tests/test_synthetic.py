@@ -120,9 +120,9 @@ def test_tube_and_bolt_are_excluded(store):
 def test_groups_split_by_thickness_and_material(store):
     pr = run(store, [("A", shapes.flat_plate(0.7, 50, 50)), ("B", shapes.flat_plate(0.7, 60, 40)),
                      ("C", shapes.flat_plate(2.0, 50, 50))])
-    pr.update_part("p2", {"material_id": "ST"})
+    pr.update_part("p2", {"material_id": "AL"})
     codes = sorted(g["code"] for g in pr.to_json()["groups"])
-    assert codes == ["ST#22", "ZN#14", "ZN#22"]
+    assert codes == ["AL#22", "ZN#14", "ZN#22"]
 
 
 def test_angles_are_written_as_the_inside_angle(store):

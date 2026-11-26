@@ -24,9 +24,9 @@ def test_default_workbook_is_created_one_sheet_per_mode(tmp_path):
     ws = wb.worksheets[1]
     assert ws["A1"].value == "ชื่อโหมด" and ws["B3"].value == 0.5
     rows = [(r[0].value, r[1].value, r[2].value, r[3].value) for r in ws.iter_rows(min_row=11, max_col=4) if r[2].value]
-    assert ("ZN", "#22", 0.7, 1.25) in rows and ("ST", "#22", 0.7, 1.25) in rows and ("ST", "#3mm", 3.0, 4.8) in rows
+    assert ("ZN", "#22", 0.7, 1.25) in rows and ("AL", "#22", 0.7, 1.25) in rows and ("AL", "#3mm", 3.0, 4.8) in rows
     steels = wb.worksheets[0]                                          # how many steel types the file has, from the file itself
-    assert [steels.cell(r, 1).value for r in (4, 5)] == ["ZN", "ST"] and steels["B1"].value == "=COUNTA(A4:A200)"
+    assert [steels.cell(r, 1).value for r in range(4, 9)] == ["ZN", "SUSHairline", "SUS", "AL", "ALA"] and steels["B1"].value == "=COUNTA(A4:A200)"
 
 
 def test_roundtrip_keeps_every_field(tmp_path):
