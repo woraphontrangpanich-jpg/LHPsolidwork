@@ -53,6 +53,7 @@ ACCESS = access.Access(DATA / "access.json")
 # the installed program keeps a copy of the Setup.exe it came from (installer/sheetflat.iss); a staff
 # installer carries the owner's codes at its end, which this PC takes over the first time
 SETUP_COPY = ROOT.parent.parent / "setup" / "SheetFlat-Setup.exe"
+UNINSTALLER = ROOT.parent.parent / "unins000.exe"          # written by the installer
 if SETUP_COPY.is_file():
     try:
         ACCESS.import_from_installer(SETUP_COPY)
@@ -161,6 +162,18 @@ def access_change(body: dict):
     if ACCESS.from_env():
         raise HTTPException(403, "รหัสของเซิร์ฟเวอร์นี้ตั้งจากค่า SHEETFLAT_STAFF_CODE / SHEETFLAT_OWNER_CODE")
     _codes(body)
+    return {"ok": True}
+
+
+@app.post("/api/uninstall")
+def uninstall():
+    """Start Windows' uninstaller for this copy (it asks to confirm), then stop so no file is in use."""
+    if CLOUD or not UNINSTALLER.is_file():
+        raise HTTPException(404, "ถอนการติดตั้งได้เฉพาะโปรแกรมที่ติดตั้งด้วย SheetFlat-Setup.exe")
+    import subprocess
+    subprocess.Popen([str(UNINSTALLER)], cwd=str(UNINSTALLER.parent), close_fds=True,
+                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    threading.Timer(1.5, lambda: os._exit(0)).start()
     return {"ok": True}
 
 
@@ -752,7 +765,8 @@ def info(request: Request):
             "logged_in": role is not None, "owner": role == access.OWNER,
             "setup_needed": not CLOUD and not ACCESS.configured(),
             "installer": role == access.OWNER and SETUP_COPY.is_file() and not ACCESS.from_env(),
-            "codes_fixed": ACCESS.from_env()}
+            "codes_fixed": ACCESS.from_env(),
+            "uninstall": role is not None and not CLOUD and UNINSTALLER.is_file()}
 
 
 @app.get("/healthz")

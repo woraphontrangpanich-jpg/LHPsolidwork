@@ -335,6 +335,71 @@ function route() {
     $("#landing").hidden = false;
   }
 }
+/* ---- download page: put passcodes into a downloaded SheetFlat-Setup.exe, all inside this browser ----
+   Same format the program writes for its "staff installer" (sheetflat/core/access.py): the plain installer,
+   then "\nSFACCESS1" + {"id", "staff": {salt, hash}, "owner": {salt, hash}} + "SFEND", where hash is
+   PBKDF2-SHA256 (200000 rounds) of the code without spaces. The codes themselves are never written. */
+const CT_ITER = 200000, CT_MARK = "\nSFACCESS1", CT_END = "SFEND";
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+const normCode = (c) => String(c || "").replace(/\s+/g, "");
+async function codeEntry(code) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(normCode(code)), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: CT_ITER }, key, 256);
+  return { salt: hex(salt), hash: hex(bits) };
+}
+async function codesBlock(owner, staff) {
+  const id = hex(crypto.getRandomValues(new Uint8Array(8)));
+  return CT_MARK + JSON.stringify({ id, staff: await codeEntry(staff), owner: await codeEntry(owner) }) + CT_END;
+}
+/* length of the plain installer: a Setup that already carries codes gets them replaced, not added to */
+async function plainLength(file) {
+  const tail = new Uint8Array(await file.slice(Math.max(0, file.size - 4096)).arrayBuffer());
+  const t = new TextDecoder("latin1").decode(tail);
+  if (!t.endsWith(CT_END)) return file.size;
+  const i = t.lastIndexOf(CT_MARK);
+  return i < 0 ? file.size : file.size - (t.length - i);
+}
+async function looksLikeSetup(file) {
+  if (!file || file.size < 20e6) return false;
+  const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  return head[0] === 0x4d && head[1] === 0x5a;          // "MZ": a Windows program
+}
+function initCodeTool() {
+  const form = $("#ctForm"); if (!form) return;
+  const input = $("#ctFile"), drop = $("#ctDrop"), name = $("#ctFileName"), err = $("#ctErr"), done = $("#ctDone"), go = $("#ctGo");
+  let file = null;
+  const fail = (m) => { err.textContent = m; err.hidden = false; done.hidden = true; };
+  const pick = async (f) => {
+    err.hidden = true; done.hidden = true;
+    if (!(await looksLikeSetup(f))) { file = null; drop.classList.remove("ok"); name.textContent = "เลือกไฟล์ SheetFlat-Setup.exe ที่ดาวน์โหลดมา หรือลากมาวางตรงนี้"; fail("ไฟล์นี้ไม่ใช่ไฟล์ติดตั้ง SheetFlat เลือกไฟล์ SheetFlat-Setup.exe ที่ดาวน์โหลดจากหน้านี้"); return; }
+    file = f; drop.classList.add("ok"); name.textContent = `${f.name} · ${Math.round(f.size / 1e6)} MB`;
+  };
+  input.addEventListener("change", () => pick(input.files[0]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true; done.hidden = true;
+    const owner = form.elements.owner.value, staff = form.elements.staff.value;
+    if (!file) return fail("เลือกไฟล์ SheetFlat-Setup.exe ก่อน");
+    if (!normCode(owner) || !normCode(staff)) return fail("กรุณาใส่รหัสทั้ง 2 ช่อง");
+    if (normCode(owner) === normCode(staff)) return fail("รหัสทั้ง 2 ช่องต้องไม่เหมือนกัน");
+    go.disabled = true;
+    try {
+      const block = await codesBlock(owner, staff);
+      const out = new Blob([file.slice(0, await plainLength(file)), block], { type: "application/octet-stream" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(out); a.download = "SheetFlat-Setup.exe";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      form.elements.owner.value = ""; form.elements.staff.value = "";
+      done.hidden = false;
+    } catch (ex) { fail("สร้างไฟล์ไม่สำเร็จ: " + ex.message); } finally { go.disabled = false; }
+  });
+}
+
 /* version, size and SHA-256 of the latest release, straight from GitHub (page works without it) */
 let releaseLoaded = false;
 async function releaseInfo() {
@@ -1879,6 +1944,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#profileSel").addEventListener("change", (e) => patchSettings({ profile: e.target.value }));
   if (DEMO) {
     document.body.classList.add("demo", "ready");
+    initCodeTool();
     window.addEventListener("hashchange", route);
     route();
     try { S.demoFiles = await (await fetch(DEMO + "files.json")).json(); } catch (_) { S.demoFiles = {}; }
@@ -1899,8 +1965,16 @@ window.addEventListener("DOMContentLoaded", async () => {
       setRole(info.owner);
       $("#btnStaffSetup").hidden = !info.installer;
       $("#btnCodes").hidden = !!info.codes_fixed;
+      $("#btnUninstall").hidden = !info.uninstall;
     } catch (_) { /* ignore */ }
     $("#btnCodes").onclick = openCodes;
+    $("#btnUninstall").onclick = () => { closeMenus(); $("#uninstDlg").showModal(); };
+    $("#uninstGo").onclick = async () => {
+      try { await sendJSON("/api/uninstall", "POST", {}); } catch (e) { toast(e.message); return; }
+      $("#uninstDlg").close();
+      document.body.innerHTML = `<main class="login"><div class="login-card"><h1>${esc(window.SF_tr ? SF_tr("กำลังถอนการติดตั้ง") : "กำลังถอนการติดตั้ง")}</h1><p>${esc(window.SF_tr ? SF_tr("ยืนยันในหน้าต่างของ Windows แล้วปิดหน้าต่างนี้ได้เลย") : "ยืนยันในหน้าต่างของ Windows แล้วปิดหน้าต่างนี้ได้เลย")}</p></div></main>`;
+      setTimeout(() => window.close(), 2500);
+    };
     $("#codesSave").onclick = saveCodes;
     $("#btnStaffSetup").onclick = () => { closeMenus(); location.href = "/api/access/installer"; toast("กำลังสร้างตัวติดตั้งสำหรับพนักงาน ไฟล์ประมาณ 110 MB", 5000); };
     document.body.classList.add("ready");

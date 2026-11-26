@@ -644,3 +644,16 @@ body:not(.logged-in) .login-only { display: none !important; }
 .codes-dlg { width: min(460px, 94vw); }
 .codes-body { display: grid; gap: 14px; }
 .codes-body .hint { margin: 0; }
+
+/* ---------- download page: put passcodes into a Setup.exe ---------- */
+.dl-codes { margin-top: 34px; padding: 22px; border: 1px solid var(--zinc-200); border-radius: 6px; background: var(--paper); }
+.dl-codes h2 { font-size: 18px; font-weight: 600; }
+.dl-codes-lede { color: var(--steel); line-height: 1.6; max-width: 62ch; margin: 6px 0 16px; }
+.dl-codes-form { display: grid; gap: 14px; max-width: 460px; }
+.dl-codes-form .btn { justify-self: start; height: 40px; }
+.ct-file { display: block; border: 1px dashed var(--zinc-300); border-radius: 6px; padding: 16px; cursor: pointer; color: var(--steel); font-size: 14px; }
+.ct-file:hover, .ct-file.over { border-color: var(--dim); color: var(--ink); }
+.ct-file.ok { border-style: solid; border-color: var(--ok); color: var(--ink); }
+.ct-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.ct-file:focus-within { outline: 2px solid var(--dim); outline-offset: 1px; }
+.ct-done { color: var(--ok); font-weight: 500; margin: 0; }

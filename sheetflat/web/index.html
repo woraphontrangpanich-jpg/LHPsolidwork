@@ -77,6 +77,7 @@
       <button type="button" role="menuitem" id="btnCodes" class="owner-only login-only"><span>เปลี่ยนรหัสเข้าใช้งาน…</span></button>
       <button type="button" role="menuitem" id="btnStaffSetup" class="owner-only login-only" hidden><span>สร้างตัวติดตั้งสำหรับพนักงาน<small>Setup.exe ที่ใช้รหัสของเครื่องนี้</small></span></button>
       <button type="button" role="menuitem" id="btnLogout" class="login-only"><span>ออกจากระบบ</span></button>
+      <button type="button" role="menuitem" id="btnUninstall" class="login-only" hidden><span>ถอนการติดตั้งโปรแกรม…</span></button>
     </div>
   </div>
 </header>
@@ -201,6 +202,23 @@
       <li><h2>เปิดจากไอคอน SheetFlat</h2>
         <p>ไอคอนอยู่บนหน้าจอและในเมนู Start โปรแกรมเปิดในหน้าต่างของตัวเอง ปิดหน้าต่างเมื่อเลิกใช้งาน</p></li>
     </ol>
+    <section class="dl-codes" aria-labelledby="ctTitle">
+      <h2 id="ctTitle">ตั้งรหัสให้ไฟล์ติดตั้ง ก่อนส่งต่อให้พนักงาน</h2>
+      <p class="dl-codes-lede">ใส่รหัสลงในไฟล์ Setup ที่ดาวน์โหลดมาได้เลย ไม่ต้องติดตั้งก่อน ทุกเครื่องที่ติดตั้งจากไฟล์ที่ได้จะใช้รหัสชุดนี้ และเปิดมาเจอหน้าใส่รหัสทันที ไฟล์และรหัสไม่ถูกส่งขึ้นอินเทอร์เน็ต ทำในเบราว์เซอร์นี้ทั้งหมด</p>
+      <form id="ctForm" class="dl-codes-form" autocomplete="off">
+        <label class="ct-file" id="ctDrop">
+          <input type="file" id="ctFile" accept=".exe">
+          <span id="ctFileName">เลือกไฟล์ SheetFlat-Setup.exe ที่ดาวน์โหลดมา หรือลากมาวางตรงนี้</span>
+        </label>
+        <label class="code-field"><span>รหัสเจ้าของ<small>ใช้ได้ทุกอย่าง รวมถึงคิดราคา</small></span>
+          <input type="text" name="owner" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+        <label class="code-field"><span>รหัสพนักงาน<small>ใช้ได้ทุกอย่าง ยกเว้นคิดราคา</small></span>
+          <input type="text" name="staff" required spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+        <p class="login-err" id="ctErr" role="alert" hidden></p>
+        <button class="btn primary" type="submit" id="ctGo">สร้างไฟล์ติดตั้งพร้อมรหัส</button>
+        <p class="ct-done" id="ctDone" role="status" hidden>ได้ไฟล์ SheetFlat-Setup.exe ที่มีรหัสแล้ว ส่งไฟล์นี้ให้พนักงานติดตั้งได้เลย</p>
+      </form>
+    </section>
     <div class="dl-more">
       <p><b>ปลอดภัยอย่างไร:</b> ไฟล์ติดตั้งสร้างโดย GitHub Actions จากโค้ดใน repo นี้ ทุกเวอร์ชันล็อกไว้ไม่เปลี่ยนภายหลัง ไม่มีสคริปต์ดาวน์โหลดโค้ดมารันเพิ่ม และโปรแกรมทำงานในเครื่องเท่านั้น ไม่ส่งไฟล์งานขึ้นอินเทอร์เน็ต</p>
       <p id="dlHash" hidden><b>ตรวจไฟล์ (SHA-256):</b> <code id="dlHashVal"></code><br>เปิด PowerShell แล้วพิมพ์ <code id="dlHashCmd">Get-FileHash SheetFlat-Setup.exe</code> ค่าที่ได้ต้องตรงกัน</p>
@@ -380,6 +398,23 @@
     <footer class="dlg-foot">
       <button class="btn" value="cancel">ยกเลิก</button>
       <button class="btn primary" type="button" id="codesSave">บันทึกรหัส</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="uninstDlg" class="dlg codes-dlg">
+  <form method="dialog" class="dlg-card">
+    <header class="dlg-head">
+      <h2>ถอนการติดตั้ง SheetFlat</h2>
+      <button class="x" value="cancel" aria-label="ปิด">×</button>
+    </header>
+    <div class="dlg-body codes-body">
+      <p>SheetFlat จะปิด แล้วหน้าต่างถอนการติดตั้งของ Windows จะขึ้นมาให้ยืนยันอีกครั้ง</p>
+      <p class="hint">ตารางค่ายืด การตั้งค่า และรหัสเข้าใช้งานจะยังเก็บไว้ ถ้าติดตั้งใหม่ภายหลังจะใช้ต่อได้ทันที อยากลบทิ้งด้วย ให้ลบโฟลเดอร์ %LOCALAPPDATA%\SheetFlat หลังถอนการติดตั้ง</p>
+    </div>
+    <footer class="dlg-foot">
+      <button class="btn" value="cancel">ยกเลิก</button>
+      <button class="btn primary" type="button" id="uninstGo">ถอนการติดตั้ง</button>
     </footer>
   </form>
 </dialog>

@@ -184,3 +184,10 @@ def test_logout():
     c = client("TEST-STAFF")
     assert c.post("/api/logout").status_code == 200
     assert c.get("/api/profiles").status_code == 401
+
+
+def test_uninstall_only_for_an_installed_copy():
+    assert client().post("/api/uninstall").status_code == 401          # needs a login
+    c = client("TEST-STAFF")
+    assert c.get("/api/info").json()["uninstall"] is False             # running from source: no uninstaller
+    assert c.post("/api/uninstall").status_code == 404
