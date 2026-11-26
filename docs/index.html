@@ -57,6 +57,10 @@
       </div>
     </div>
   </div>
+  <div class="lang-switch" role="radiogroup" aria-label="Language / ภาษา">
+    <button type="button" role="radio" data-lang-pick="th" aria-checked="true" lang="th" title="ภาษาไทย">TH</button>
+    <button type="button" role="radio" data-lang-pick="en" aria-checked="false" lang="en" title="English">EN</button>
+  </div>
   <div class="menu menu-more" data-menu="more">
     <button class="icon-btn menu-btn" type="button" aria-label="เมนูเพิ่มเติม" title="เมนูเพิ่มเติม">
       <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>
@@ -69,10 +73,6 @@
       <button type="button" role="menuitemradio" data-theme-pick="auto" aria-checked="false"><span>อัตโนมัติ (ตาม Windows)</span></button>
       <button type="button" role="menuitemradio" data-theme-pick="light" aria-checked="false"><span>สว่าง</span></button>
       <button type="button" role="menuitemradio" data-theme-pick="dark" aria-checked="false"><span>มืด</span></button>
-      <hr>
-      <p class="menu-label">Language / ภาษา</p>
-      <button type="button" role="menuitemradio" data-lang-pick="th" aria-checked="true"><span>ไทย</span></button>
-      <button type="button" role="menuitemradio" data-lang-pick="en" aria-checked="false"><span>English</span></button>
       <hr class="login-only">
       <button type="button" role="menuitem" id="btnCodes" class="owner-only login-only"><span>เปลี่ยนรหัสเข้าใช้งาน…</span></button>
       <button type="button" role="menuitem" id="btnStaffSetup" class="owner-only login-only" hidden><span>สร้างตัวติดตั้งสำหรับพนักงาน<small>Setup.exe ที่ใช้รหัสของเครื่องนี้</small></span></button>
@@ -422,7 +422,7 @@
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script src="i18n-en.js" defer></script>
 <script src="i18n.js" defer></script>
-<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "1.6.2";</script>
+<script>window.SHEETFLAT_DEMO = "demo/"; window.SHEETFLAT_VERSION = "1.6.3";</script>
 <script src="app.js" defer></script>
 </body>
 </html>
