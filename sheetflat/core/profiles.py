@@ -21,13 +21,17 @@ import threading
 from pathlib import Path
 
 from .bend import BendModel
-from .bend_xlsx import read_profiles, write_profiles
+from .bend_xlsx import read_materials, read_profiles, write_profiles
 
 SHIPPED_BEND_XLSX = Path(__file__).resolve().parent.parent / "bend_tables.xlsx"   # the shop standard, in git
 
 DEFAULT_MATERIALS = [
     {"id": "ZN", "name": "เหล็กซิงค์ (ZN)", "prefix": "ZN"},
     {"id": "ST", "name": "เหล็กขาว (ST)", "prefix": "ST"},
+    {"id": "SUSHairline", "name": "สแตนเลส Hairline", "prefix": "SUSHairline"},
+    {"id": "SUS", "name": "สแตนเลส", "prefix": "SUS"},
+    {"id": "AL", "name": "อลูมิเนียม", "prefix": "AL"},
+    {"id": "ALA", "name": "อลูมิเนียมชุบ", "prefix": "ALA"},
 ]
 
 DEFAULT_TABLE = [
@@ -60,6 +64,7 @@ DEFAULT_PROFILE = {
 # Rows are added automatically for every steel x thickness in the bend table (and in the job).
 STEEL_DEFAULTS = {          # first values for a new row: (price/kg below 3 mm, from 3 mm, kg of 1220x2440 sheet per mm)
     "ZN": (35, 45, 24), "ST": (45, 45, 24), "AL": (150, 150, 8), "SUS": (120, 120, 23),
+    "SUSHairline": (120, 120, 23), "ALA": (150, 150, 8),     # same as SUS / AL until the shop types its own price
 }
 EXTRA_UNITS = {             # how an extra cost is counted
     "piece": "ชิ้น", "bend": "จุดพับ", "hole": "รู", "kg": "กก.", "m2": "ตร.ม.", "job": "งาน",
@@ -73,14 +78,11 @@ DEFAULT_PRICING = {
     ],
     "margin": 20.0,              # mm added to every part for clamping and spacing ("เผื่อที่ clamp & วางแบบ")
     "prices": [],                # filled from the bend table by fill_price_rows()
-    "paint_per_m2": 200.0,       # ค่าสี 0.0002 baht / mm2
-    "no_paint": ["SUS"],         # steels not painted by default (each part can be ticked)
-    "plating_per_kg": 20.0,      # ค่าชุบ
+    "paint_per_m2": 0.0,         # ค่าสี (บาท / ตร.ม.): default is steel price only, the user adds paint / plating / labour
+    "no_paint": ["SUS", "SUSHairline"],         # steels not painted by default (each part can be ticked)
+    "plating_per_kg": 0.0,       # ค่าชุบ
     "markup_pct": 0.0,
-    "extras": [                  # other costs the user can add (Note sheet: พับ 5 บาท, ติ๊ก 5 บาท)
-        {"name": "ค่าพับ", "rate": 5.0, "unit": "bend", "on": True},
-        {"name": "ค่าติ๊ก", "rate": 5.0, "unit": "piece", "on": False},
-    ],
+    "extras": [],                # other costs are added by the user (e.g. ค่าพับ 5 บาท / จุดพับ, ค่าติ๊ก 5 บาท / ชิ้น)
 }
 
 
@@ -246,7 +248,7 @@ class ProfileStore:
             self._read_workbook()
         else:
             try:
-                write_profiles(self.bend_path, self.data["profiles"])
+                write_profiles(self.bend_path, self.data["profiles"], materials=self.data["materials"])
             except OSError as ex:
                 self.bend_error = f"สร้างไฟล์ค่ายืด Excel ไม่ได้: {ex}"
             self._bend_stamp = self._stamp()
@@ -257,6 +259,8 @@ class ProfileStore:
             profs = read_profiles(self.bend_path)
             for p in profs:
                 _validate_profile(p)
+            mats = read_materials(self.bend_path)
+            mats = _validate_materials(mats) if mats else None
         except (ValueError, KeyError, OSError) as ex:
             self.bend_error = str(ex)
             self._bend_stamp = stamp               # do not complain again until the file changes
@@ -265,6 +269,8 @@ class ProfileStore:
         self._bend_stamp = stamp
         with self._lock:
             self.data["profiles"] = profs
+            if mats:
+                self.data["materials"] = mats              # the steel types listed in the workbook
             ids = [p["id"] for p in profs]
             if self.data["active"] not in ids:
                 self.data["active"] = ids[0]
@@ -276,11 +282,11 @@ class ProfileStore:
         stamp = self._stamp()
         if stamp is None or stamp == self._bend_stamp:
             return False
-        before = json.dumps(self.data["profiles"], sort_keys=True)
+        before = json.dumps([self.data["profiles"], self.data["materials"]], sort_keys=True)
         ok = self._read_workbook()
         if ok:
             self.save()
-        return ok and json.dumps(self.data["profiles"], sort_keys=True) != before
+        return ok and json.dumps([self.data["profiles"], self.data["materials"]], sort_keys=True) != before
 
     def replace(self, data: dict):
         with self._lock:
@@ -295,7 +301,7 @@ class ProfileStore:
             ids = [p["id"] for p in base["profiles"]]
             if base["active"] not in ids:
                 base["active"] = ids[0]
-            write_profiles(self.bend_path, base["profiles"])      # PermissionError if it is open in Excel
+            write_profiles(self.bend_path, base["profiles"], materials=base["materials"])      # PermissionError if it is open in Excel
             self._bend_stamp = self._stamp()
             self.bend_error = ""
             self.data = base

@@ -1921,7 +1921,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#btnPrice").onclick = openPricing;
   $("#priceXlsx").onclick = priceXlsx;
   $("#priceDefault").onclick = () => { if (DEMO) { toast(DEMO_MSG); return; } clearTimeout(schedulePrice._t); pushPrice(true); };
-  $("#priceForm").addEventListener("submit", (e) => e.preventDefault());
+  $("#priceForm").addEventListener("submit", (e) => { e.preventDefault(); if (e.submitter && e.submitter.classList.contains("x")) $("#priceDlg").close(); });
   $("#tFit").onclick = () => viewer.fit();
   $("#v2d").onclick = () => setView3d(false);
   $("#v3d").onclick = () => setView3d(true);

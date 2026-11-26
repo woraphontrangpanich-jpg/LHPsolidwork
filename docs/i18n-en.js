@@ -919,5 +919,13 @@ window.SF_EN = {
 "ค่าสี": "Paint",
 "ลำดับ": "No.",
 "วัสดุ": "Material",
+"เหล็ก (รหัส)": "Steel (code)",
+"จำนวนชนิดเหล็ก": "Number of steel types",
+"1 แถว = เหล็ก 1 ชนิด · คอลัมน์ D เป็นต้นไป = จำนวนแถวความหนาของเหล็กชนิดนั้นในแต่ละโหมด (เช็กว่าครบ)": "1 row = 1 steel type · columns D onward = how many thickness rows that steel has in each mode (to check nothing is missing)",
+"1 แถว = เหล็กชนิดนี้ ที่ความหนานี้ ใช้ค่ายืดเท่านี้ · เหล็กชนิดใหม่ให้เพิ่มแถวของมันในตารางนี้": "1 row = this steel, at this thickness, with this deduction · for a new steel type, add its rows to this table",
+"สแตนเลส Hairline": "Stainless Hairline",
+"สแตนเลส": "Stainless steel",
+"อลูมิเนียมชุบ": "Plated aluminium",
+"อลูมิเนียม": "Aluminium",
 "สรุป": "Summary"
 };

@@ -62,6 +62,12 @@ def test_pricing_follows_the_workbook_formulas(client, job):
     jid, P = job
     r = client.get(f"/api/jobs/{jid}/pricing").json()
     assert not r["errors"] and r["total"] > 0
+    # default = steel price only: no paint, plating or extra costs until the user adds them
+    d = r["pricing"]
+    assert d["paint_per_m2"] == 0 and d["plating_per_kg"] == 0 and d["extras"] == []
+    assert all(row["paint"] == 0 and row["extra"] == 0 for row in r["rows"])
+    d["extras"] = [{"name": "ค่าพับ", "rate": 5, "unit": "bend", "on": True}]
+    r = client.put(f"/api/jobs/{jid}/pricing", json={"pricing": d}).json()
     for row in r["rows"]:
         sh = row["sheet"]
         assert sh["count"] == max(sh["count1"], sh["count2"]) >= 1
@@ -210,7 +216,9 @@ def test_quantities_sets_paint_and_plating(client, job):
     assert hook["qty"] == hook["qty_asm"] * 3
     # paint off, plating on for Body
     client.patch(f"/api/jobs/{jid}/parts/{body['id']}", json={"paint": False, "plate": True})
-    r = client.get(f"/api/jobs/{jid}/pricing").json()
+    d = client.get(f"/api/jobs/{jid}/pricing").json()["pricing"]
+    d["paint_per_m2"], d["plating_per_kg"] = 200, 20
+    r = client.put(f"/api/jobs/{jid}/pricing", json={"pricing": d}).json()
     row = next(x for x in r["rows"] if x["part_id"] == body["id"])
     assert row["paint"] == 0 and not row["paint_on"] and row["plate_on"] and row["plating"] > 0
     assert row["total"] == pytest.approx((row["metal"] + row["extra"]) * 15 + row["plating"], abs=1e-6)

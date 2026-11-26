@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sheetflat.core.bend_xlsx import write_profiles          # noqa: E402
-from sheetflat.core.profiles import DEFAULT_PROFILE, SHIPPED_BEND_XLSX  # noqa: E402
+from sheetflat.core.profiles import DEFAULT_MATERIALS, DEFAULT_PROFILE, SHIPPED_BEND_XLSX  # noqa: E402
 
-write_profiles(SHIPPED_BEND_XLSX, [DEFAULT_PROFILE])
+write_profiles(SHIPPED_BEND_XLSX, [DEFAULT_PROFILE], materials=DEFAULT_MATERIALS)
 print("wrote", SHIPPED_BEND_XLSX)

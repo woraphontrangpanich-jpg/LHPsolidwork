@@ -661,7 +661,7 @@ def download_bend_xlsx(lang: str = ""):
     tmp = Path(tempfile.mkdtemp(prefix="bend_", dir=DATA))
     try:
         out = tmp / "bend_tables.xlsx"
-        write_profiles(out, store.data["profiles"], lang)
+        write_profiles(out, store.data["profiles"], lang, materials=store.data["materials"])
         return _attach(out.read_bytes(), store.bend_path.name,
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     finally:
@@ -678,12 +678,15 @@ async def upload_bend_xlsx(request: Request, file: UploadFile = File(...)):
     try:
         tmp = tmpdir / "bend_tables.xlsx"
         tmp.write_bytes(raw)
-        from .core.bend_xlsx import read_profiles
-        from .core.profiles import _validate_profile
+        from .core.bend_xlsx import read_materials, read_profiles
+        from .core.profiles import _validate_materials, _validate_profile
         try:
             profs = read_profiles(tmp)
             for p in profs:
                 _validate_profile(p)
+            mats = read_materials(tmp)
+            if mats:
+                _validate_materials(mats)
         except (ValueError, KeyError) as ex:
             raise HTTPException(400, f"ไฟล์ค่ายืดไม่ถูกต้อง: {ex}")
         try:
