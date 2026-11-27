@@ -19,14 +19,23 @@ side of the sheet is then broken at some corner, and without this the unfold rea
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCP.GC import GC_MakeArcOfCircle
+from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
+from OCP.TopExp import TopExp_Explorer
 from OCP.BRepClass3d import BRepClass3d_SolidClassifier
 from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_IN
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_IN, TopAbs_SOLID
 from OCP.TopExp import TopExp
 from OCP.TopoDS import TopoDS
-from OCP.gp import gp_Pnt
+from OCP.gp import gp_Pnt, gp_Vec
 import OCP.collections as _c
 
 from .analysis import analyze
@@ -37,6 +46,9 @@ R_IN = 0.01                 # stands for a sharp (0 mm) inner radius
 # faces it fails): larger ones are tried in turn. Whatever radius is used, the unfold reads it as 0
 # (SolidData.r0_faces), so the flat pattern does not depend on it.
 R_TRY = (R_IN, 0.05, 0.1, 0.2)
+# inside-only corners are filled with a rounded strip (boolean fuse); a radius well above the modelling tolerance
+# keeps the boolean clean. Read back as R 0 like the fillets.
+R_FILL = (0.05, 0.1, 0.2)
 
 
 def _sharp_edges(solid, sd, an):
@@ -149,6 +161,133 @@ def sharp_corners_to_bends(solid, sd, an):
         return None
     # one corner = its inside edge + the outside edges next to it (none when the outside is already rounded)
     corners = [(i, [j for j in outs if _near(sd, i, j, t)]) for i in ins]
+    # sharp on both sides: both edges rounded with OpenCASCADE fillet. Sharp inside only: the inside corner is
+    # filled with a rounded strip (_fill_inside). Fillet is not used there: it fails at many such corners (where
+    # the corner ends against the outside arc of the next bend) and a corner it cannot round would be left out.
+    corners_fil = [c for c in corners if c[1]]
+    corners_arc = [c[0] for c in corners if not c[1]]
+    sel = []
+    new = solid
+    if corners_fil:
+        new, sel = _fillet(solid, corners_fil, t)
+    arcs = []
+    if corners_arc:
+        new, arcs = _fill_inside(new, sd, corners_arc)
+    if not sel and not arcs:
+        return None
+    sd2 = extract_solid(new)
+    sd2.r0_faces = _rounding_faces(sd, sd2, sel, t) | _fill_faces(sd, sd2, arcs)
+    an2 = analyze(sd2)
+    if not an2.ok or abs(an2.thickness - t) > 0.02 * t + 0.01:
+        return None
+    (n1, lost1), (n2, lost2) = _split_score(an), _split_score(an2)
+    if not (n2 < n1 or (n2 == n1 and lost2 < lost1 - 1e-6)):     # the corners must join something
+        return None
+    return new, sd2, an2, len(sel) + len(arcs)
+
+
+def _corner_frame(sd, eid):
+    """Inside sharp edge between plane faces a and b: (p0, p1, d, ua, ub, half) with ua / ub the directions from the
+    edge into face a / b and half = half the angle between the faces (on the open side)."""
+    e = sd.edges[eid]
+    a, b = (sd.faces[i] for i in e.face_ids)
+    p0, p1 = e.p0, e.p1
+    d = (p1 - p0) / (np.linalg.norm(p1 - p0) or 1.0)
+    ua = np.cross(d, a.normal)
+    ub = np.cross(d, b.normal)
+    if float(ua @ b.normal) < 0:      # at an inside corner, face a runs towards b's outward side
+        ua = -ua
+    if float(ub @ a.normal) < 0:
+        ub = -ub
+    ua, ub = ua / np.linalg.norm(ua), ub / np.linalg.norm(ub)
+    half = 0.5 * math.acos(max(-1.0, min(1.0, float(ua @ ub))))
+    return p0, p1, d, ua, ub, half
+
+
+def _fill_inside(shape, sd, eids):
+    """Round the inside sharp edges ``eids`` by fusing a strip that fills each corner up to a radius r (the open
+    side between the two faces, r tangent to both). Returns (shape, [(eid, r)]) with the corners done."""
+    def strip(eid, r):
+        p0, p1, d, ua, ub, half = _corner_frame(sd, eid)
+        if half < math.radians(5):
+            return None
+        s = r / math.tan(half)
+        bis = (ua + ub) / np.linalg.norm(ua + ub)
+        c = p0 + bis * (r / math.sin(half))
+        ta, tb, mid = p0 + ua * s, p0 + ub * s, c - bis * r
+        P = lambda v: gp_Pnt(*map(float, v))
+        w = BRepBuilderAPI_MakeWire()
+        w.Add(BRepBuilderAPI_MakeEdge(P(p0), P(ta)).Edge())
+        w.Add(BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(P(ta), P(mid), P(tb)).Value()).Edge())
+        w.Add(BRepBuilderAPI_MakeEdge(P(tb), P(p0)).Edge())
+        face = BRepBuilderAPI_MakeFace(w.Wire()).Face()
+        return BRepPrimAPI_MakePrism(face, gp_Vec(*map(float, p1 - p0))).Shape()
+
+    def fused(base, tools):
+        try:
+            lst = _c.List_TopoDS_Shape()
+            lst.Append(base)
+            tl = _c.List_TopoDS_Shape()
+            for x in tools:
+                tl.Append(x)
+            op = BRepAlgoAPI_Fuse()
+            op.SetArguments(lst)
+            op.SetTools(tl)
+            op.Build()
+            if not op.IsDone():
+                return None
+            u = ShapeUpgrade_UnifySameDomain(op.Shape(), True, True, False)
+            u.Build()
+            ex = TopExp_Explorer(u.Shape(), TopAbs_SOLID)
+            if not ex.More():
+                return None
+            sol = TopoDS.Solid(ex.Current())
+            ex.Next()
+            if ex.More() or not BRepCheck_Analyzer(sol).IsValid():     # must stay one valid solid
+                return None
+            return sol
+        except Exception:   # noqa
+            return None
+
+    for r in R_FILL:                       # all corners at once
+        tools = [strip(i, r) for i in eids]
+        if all(x is not None for x in tools):
+            new = fused(shape, tools)
+            if new is not None:
+                return new, [(i, r) for i in eids]
+    done = []                              # else one by one
+    for i in eids:
+        for r in R_FILL:
+            x = strip(i, r)
+            new = fused(shape, [x]) if x is not None else None
+            if new is not None:
+                shape = new
+                done.append((i, r))
+                break
+    return shape, done
+
+
+def _fill_faces(sd, sd2, arcs):
+    """The cylinders _fill_inside added: ids in sd2."""
+    out = set()
+    for i, r in arcs:
+        p0, _, d, ua, ub, half = _corner_frame(sd, i)
+        bis = (ua + ub) / np.linalg.norm(ua + ub)
+        c = p0 + bis * (r / math.sin(half))
+        for f in sd2.faces:
+            if f.kind != "cylinder" or f.axis_dir is None or f.axis_pt is None or abs(f.radius - r) > 1e-4:
+                continue
+            if abs(abs(float(np.dot(f.axis_dir, d))) - 1) > 1e-3:
+                continue
+            w = f.axis_pt - c
+            if np.linalg.norm(w - np.dot(w, d) * d) <= 0.1 * r + 1e-4:
+                out.add(f.id)
+    return out
+
+
+def _fillet(solid, corners, t):
+    """Round corners sharp on both sides with OpenCASCADE fillet (inside R, outside R + t).
+    Returns (shape, [(corner, r)])."""
     emap = _c.IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()   # same edge numbering as brep.extract_solid
     TopExp.MapShapes_s(solid, TopAbs_EDGE, emap)
 
@@ -180,16 +319,8 @@ def sharp_corners_to_bends(solid, sd, an):
                     new = shp
                     break
         if not sel:
-            return None
-    sd2 = extract_solid(new)
-    sd2.r0_faces = _rounding_faces(sd, sd2, sel, t)
-    an2 = analyze(sd2)
-    if not an2.ok or abs(an2.thickness - t) > 0.02 * t + 0.01:
-        return None
-    (n1, lost1), (n2, lost2) = _split_score(an), _split_score(an2)
-    if not (n2 < n1 or (n2 == n1 and lost2 < lost1 - 1e-6)):     # the corners must join something
-        return None
-    return new, sd2, an2, len(sel)
+            return solid, []
+    return new, sel
 
 
 def _rounding_faces(sd, sd2, sel, t):

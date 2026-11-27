@@ -54,6 +54,23 @@ def test_z_sharp_inside_round_outside_is_one_flat(tmp_path):
     assert not any("คลี่ได้ไม่ครบ" in w for w in p["warnings"])
 
 
+def test_inside_only_corners_do_not_need_fillet(tmp_path, monkeypatch):
+    """OpenCASCADE fillet fails at many inside-sharp / outside-round corners (validate/test1.3: a tab was lost).
+    Those corners are filled without it, so the Z still unfolds whole when fillet cannot do anything."""
+    import sheetflat.core.sharpbend as sb
+
+    def no_fillet(*a):
+        raise RuntimeError("fillet not available")
+    monkeypatch.setattr(sb, "BRepFilletAPI_MakeFillet", no_fillet)
+    t, a, h, b, L = 2.0, 40.0, 30.0, 35.0, 150.0
+    p = _part(tmp_path, shapes.z_outer_round(t, a, h, b, L), "z")
+    f = p["flat"]
+    assert p["include"], p["reason"]
+    assert len(f["bends"]) == 2 and all(x["method"] == "table" for x in f["bends"])
+    assert sorted([round(f["w"], 2), round(f["h"], 2)]) == sorted([round(a + h + b + t - 2 * 3.2, 2), L])
+    assert p["checks"]["lost_area"] == 0
+
+
 def test_part_unfolded_only_in_part_says_so(tmp_path, monkeypatch):
     """When the corners cannot be joined, the part is reported as unfolded only in part (it is sheet metal),
     not as a screw or casting, and forcing it in keeps a warning."""
