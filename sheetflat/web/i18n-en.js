@@ -1,5 +1,12 @@
 /* Thai -> English phrases for the language switch (generated; keys are the Thai texts used in the program) */
 window.SF_EN = {
+"คลี่ได้ไม่ครบ - แผ่นเหล็กอีก": "Only partly unfolded - another",
+"ไม่อยู่ในแบบคลี่ (ต่อกับส่วนที่คลี่ไม่ได้ ที่มุมพับซึ่งอ่านไม่ออก)": "of sheet is not in the flat pattern (joined at a bend corner that could not be read)",
+"ไม่นำไปตัดไว้ก่อน ตรวจมุมพับในแบบ": "not cut for now; check the bend corners in the model",
+"ตรวจเทียบกับแบบ": "check against the drawing",
+"มีแผ่นเหล็ก": "Sheet of",
+"ไม่อยู่ในแบบคลี่": "not in the flat pattern",
+"ส่วนนี้ต่อกับส่วนที่คลี่ได้ที่มุมพับซึ่งอ่านไม่ออก": "It joins the unfolded part at a bend corner that could not be read",
 "ถอนการติดตั้งโปรแกรม…": "Uninstall the program…",
 "ถอนการติดตั้ง SheetFlat": "Uninstall SheetFlat",
 "ถอนการติดตั้ง": "Uninstall",

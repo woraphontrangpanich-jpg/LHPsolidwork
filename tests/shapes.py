@@ -139,3 +139,30 @@ def sharp_profile(points, length):
         w.Add(BRepBuilderAPI_MakeEdge(_P(*p), _P(*q)).Edge())
     face = BRepBuilderAPI_MakeFace(w.Wire()).Face()
     return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, length)).Shape()
+
+
+def z_outer_round(t, a, h, b, length):
+    """A Z (outside sizes: bottom flange a, web h, top flange b + t) whose two 90 degree bends are sharp inside and
+    rounded R = t outside, around the inside edge (inner radius 0 drawn as a bend). The bends turn opposite ways,
+    so each side of the sheet is broken at one corner. Profile in XY, extruded along Z."""
+    s = math.sqrt(0.5)
+    w = BRepBuilderAPI_MakeWire()
+
+    def line(p, q):
+        w.Add(BRepBuilderAPI_MakeEdge(_P(*p), _P(*q)).Edge())
+
+    def arc(p, m, q):
+        w.Add(BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(_P(*p), _P(*m), _P(*q)).Value()).Edge())
+
+    line((0, 0), (a - t, 0))
+    arc((a - t, 0), (a - t + t * s, t - t * s), (a, t))              # outside of bend 1, around (a - t, t)
+    line((a, t), (a, h - t))                                         # inside corner of bend 2 at (a, h - t)
+    line((a, h - t), (a + b, h - t))
+    line((a + b, h - t), (a + b, h))
+    line((a + b, h), (a, h))
+    arc((a, h), (a - t * s, h - t + t * s), (a - t, h - t))          # outside of bend 2, around (a, h - t)
+    line((a - t, h - t), (a - t, t))                                 # inside corner of bend 1 at (a - t, t)
+    line((a - t, t), (0, t))
+    line((0, t), (0, 0))
+    face = BRepBuilderAPI_MakeFace(w.Wire()).Face()
+    return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, length)).Shape()

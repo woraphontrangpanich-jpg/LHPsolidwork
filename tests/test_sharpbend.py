@@ -39,3 +39,34 @@ def test_sharp_channel_has_two_table_bends(tmp_path):
 def test_plain_flat_plate_is_untouched(tmp_path):
     p = _part(tmp_path, shapes.flat_plate(2.0, 100, 50), "plate")
     assert not any("มุมพับคม" in w for w in p["warnings"])
+
+
+def test_z_sharp_inside_round_outside_is_one_flat(tmp_path):
+    """Bends sharp inside, rounded R = t outside (around the inside edge), turning opposite ways (a Z): no side of
+    the sheet runs through, but it is still one bent part with two R 0 bends."""
+    t, a, h, b, L = 2.0, 40.0, 30.0, 35.0, 150.0
+    p = _part(tmp_path, shapes.z_outer_round(t, a, h, b, L), "z")
+    f = p["flat"]
+    assert p["include"], p["reason"]
+    assert len(f["bends"]) == 2 and all(x["method"] == "table" and x["bd"] == 3.2 for x in f["bends"])
+    # outside sizes a, h, b + t, minus two BD
+    assert sorted([round(f["w"], 2), round(f["h"], 2)]) == sorted([round(a + h + b + t - 2 * 3.2, 2), L])
+    assert not any("คลี่ได้ไม่ครบ" in w for w in p["warnings"])
+
+
+def test_part_unfolded_only_in_part_says_so(tmp_path, monkeypatch):
+    """When the corners cannot be joined, the part is reported as unfolded only in part (it is sheet metal),
+    not as a screw or casting, and forcing it in keeps a warning."""
+    import sheetflat.core.project as project
+    monkeypatch.setattr(project, "sharp_corners_to_bends", lambda *a: None)
+    step = tmp_path / "z.step"
+    shapes.write_step(shapes.z_outer_round(2.0, 40.0, 30.0, 35.0, 150.0), step)
+    pr = Project(ProfileStore(tmp_path / "p.json"), "z", step.name)
+    pr.load_step(str(step))
+    p = pr.to_json()["parts"][0]
+    assert not p["include"] and p["reason_code"] == "unfold_incomplete"
+    assert "น็อต" not in p["reason"]
+    pr.update_part(p["id"], {"include": True})
+    p = pr.to_json()["parts"][0]
+    assert p["include"] and any("คลี่ได้ไม่ครบ" in w for w in p["warnings"])
+    assert p["checks"]["lost_area"] > 0

@@ -17,7 +17,7 @@ from .brep import SolidData, extract_solid
 from .layout import Item, Placed, Sheet, pack, place_geometry, place_loops
 from .i18n import fname
 from .profiles import ProfileStore, bend_model, match_row, material_code, validate_pricing
-from .sharpbend import sharp_corners_to_bends
+from .sharpbend import needs_join, sharp_corners_to_bends
 from .splitfused import merge_copies, split_fused
 from .step_reader import PartDef, read_step
 from .unfold import FlatPiece, UnfoldError, prim_points, unfold
@@ -38,6 +38,7 @@ DEFAULT_SETTINGS = {
 }
 
 
+LOST_FRACTION = 0.02       # sheet area the unfold does not reach, as a part of the unfolded side: beyond it, say so
 MAX_VOLUME_DEV = 10.0      # % between (flat area x thickness) and the solid volume: beyond it the part is not bent sheet
 
 
@@ -219,9 +220,10 @@ class Project:
             an = analyze(sd)
         except Exception as ex:   # noqa
             an = SheetAnalysis(ok=False, reason=f"วิเคราะห์ไม่สำเร็จ: {ex}")
-        # one solid whose flanges meet at sharp corners (drawn with no bend radius): the corners are bends
-        # with inner radius 0 (below the 0.2 mm table limit, so a 90 degree corner uses the bend table)
-        if an.ok and len(an.pieces) > 1:
+        # one solid whose flanges meet at sharp corners (drawn with no bend radius, or rounded on the outside
+        # only): the corners are bends with inner radius 0 (below the 0.2 mm table limit, so a 90 degree corner
+        # uses the bend table). Also when the part is one piece whose sheet sides are broken at such corners.
+        if needs_join(an):
             try:
                 fixed = sharp_corners_to_bends(solid, sd, an)
             except Exception:   # noqa
@@ -319,14 +321,31 @@ class Project:
             "pieces": len(pieces),
             "thickness_weight": rec.analysis.thickness_weight,
         }
+        # sheet the unfold did not reach (a stretch of the part joined to the rest at a corner it could not read)
+        lost = sum(pc.get("lost_area", 0.0) for pc in rec.analysis.pieces)
+        unfolded = sum(rec.sd.faces[i].area for pc in rec.analysis.pieces for i in pc["faces"]) or 1.0
+        lost_pct = lost / unfolded * 100.0
+        incomplete = lost_pct > LOST_FRACTION * 100.0
+        rec.checks["lost_area"] = lost if incomplete else 0.0
         if dev is not None and abs(dev) > MAX_VOLUME_DEV and not rec.forced:
-            # area x thickness must equal the volume of a sheet part; a screw, nut or casting never does
             rec.pieces, rec.checks = [], {}
-            rec.status, rec.reason_code = "excluded", "volume_mismatch"
-            rec.auto_reason = (f"แผ่นคลี่ × ความหนา ต่างจากปริมาตรชิ้นงาน {dev:+.1f}% - ไม่ใช่แผ่นเหล็กพับ "
-                               "(เช่น น็อต สกรู ชิ้นหล่อ) ไม่นำไปตัดไว้ก่อน")
+            rec.status = "excluded"
+            if incomplete:
+                # it is sheet metal, but only part of it was unfolded: not a screw or casting
+                rec.reason_code = "unfold_incomplete"
+                rec.auto_reason = (f"คลี่ได้ไม่ครบ - แผ่นเหล็กอีก {lost:.0f} ตร.มม. "
+                                   "ไม่อยู่ในแบบคลี่ (ต่อกับส่วนที่คลี่ไม่ได้ ที่มุมพับซึ่งอ่านไม่ออก) - "
+                                   f"แผ่นคลี่ × ความหนา ต่างจากปริมาตรชิ้นงาน {dev:+.1f}% - ไม่นำไปตัดไว้ก่อน ตรวจมุมพับในแบบ")
+            else:
+                # area x thickness must equal the volume of a sheet part; a screw, nut or casting never does
+                rec.reason_code = "volume_mismatch"
+                rec.auto_reason = (f"แผ่นคลี่ × ความหนา ต่างจากปริมาตรชิ้นงาน {dev:+.1f}% - ไม่ใช่แผ่นเหล็กพับ "
+                                   "(เช่น น็อต สกรู ชิ้นหล่อ) ไม่นำไปตัดไว้ก่อน")
             rec.include = False
             return
+        if incomplete:
+            rec.warnings.append(f"คลี่ได้ไม่ครบ - แผ่นเหล็กอีก {lost:.0f} ตร.มม. "
+                                "ไม่อยู่ในแบบคลี่ (ต่อกับส่วนที่คลี่ไม่ได้ ที่มุมพับซึ่งอ่านไม่ออก) - ตรวจเทียบกับแบบ")
         if dev is not None and abs(dev) > 1.5:
             rec.warnings.append(f"พื้นที่คลี่ไม่ตรงกับปริมาตรชิ้นงาน ({dev:+.2f}%) - ตรวจสอบว่ามีรูปทรงพิเศษ (ปั๊มนูน/เฉียง/ผิวโค้ง)")
         uns = rec.analysis.unsupported_faces
@@ -459,7 +478,7 @@ class Project:
             if "include" in patch:
                 rec.include = bool(patch["include"])
                 if rec.include and rec.status == "excluded" and rec.reason_code in (
-                        "keyword", "not_sheet", "unfold_failed", "off_table", "volume_mismatch"):
+                        "keyword", "not_sheet", "unfold_failed", "off_table", "volume_mismatch", "unfold_incomplete"):
                     # user forces inclusion: try to treat as sheet
                     if rec.analysis and rec.analysis.ok:
                         rec.status = "sheet"

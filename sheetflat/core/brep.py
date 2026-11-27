@@ -77,6 +77,7 @@ class SolidData:
     volume: float
     area: float
     bbox: tuple[np.ndarray, np.ndarray]
+    r0_faces: set = field(default_factory=set)     # cylinders added only to round a sharp corner: inner radius 0 (sharpbend.py)
 
     def edge_faces(self, e: Edge) -> list[Face]:
         return [self.faces[i] for i in e.face_ids]

@@ -356,10 +356,18 @@ def _chart_across(sd, fch, f: Face, e: Edge, g: Face, model: BendModel, bends: d
         raise UnfoldError("มุมพับเป็นศูนย์")
     skin_outer = g.out_sign > 0
     r_in = g.radius - model.thickness if skin_outer else g.radius
+    r_fill = None
+    if g.id in sd.r0_faces:
+        # a sharp corner, rounded with a small radius only so that it can be unfolded (sharpbend.py): the bend is
+        # R 0. The rounding made each straight flange shorter by r * tan(theta / 2); that is given back in the
+        # allowance, so the flat is the one of the sharp corner whatever radius was used.
+        r_fill, r_in = max(r_in, 0.0), 0.0
     if r_in < 0:
         warnings.append(f"รัศมีในของรอยพับติดลบ ({r_in:.3f}) ปรับเป็น 0")
         r_in = 0.0
     ba, method, bd, k = model.allowance(theta, r_in, force_k=g.id in jog)
+    if r_fill:
+        ba += 2.0 * r_fill * math.tan(theta / 2.0)
     d2_axis = D2 * (1.0 if float(a @ g.axis_dir) >= 0 else -1.0)
     ch = CylChart(g, Y0, q, d2_axis, M2, uE, sgn, ba, theta)
     bends[g.id] = BendRecord(face_id=g.id, angle_deg=math.degrees(theta), r_inner=r_in, method=method, ba=ba, bd=bd, k=k,

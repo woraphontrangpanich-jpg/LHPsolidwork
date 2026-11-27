@@ -777,6 +777,7 @@ function partInspector(p) {
       const k = Math.abs(dev) <= 0.5 ? "ok" : Math.abs(dev) <= 1.5 ? "warn" : "bad";
       checks.push([k, `พื้นที่คลี่ × ความหนา ตรงกับปริมาตรชิ้นงาน (${dev >= 0 ? "+" : ""}${fmt(dev, 3)}%)`, "คำนวณแยกอิสระด้วย K = 0.5 เทียบกับปริมาตรจากโมเดล 3D"]);
     }
+    if ((c.lost_area || 0) > 0) checks.push(["bad", `มีแผ่นเหล็ก ${fmt(c.lost_area, 0)} ตร.มม. ไม่อยู่ในแบบคลี่`, "ส่วนนี้ต่อกับส่วนที่คลี่ได้ที่มุมพับซึ่งอ่านไม่ออก"]);
     checks.push([c.closed ? "ok" : "bad", c.closed ? "เส้นตัดทุกเส้นปิดสนิท" : "มีเส้นตัดไม่ปิด"]);
     checks.push([(c.thickness_weight || 0) > 0.8 ? "ok" : "warn", `ความหนา ${fmt(t.measured, 3)} มม. ยืนยันจากผิวคู่ขนาน ${fmt((c.thickness_weight || 0) * 100, 0)}% ของพื้นที่ระนาบ`]);
     checks.push([t.matched ? "ok" : "warn", t.matched ? `ความหนาตรงกับตาราง (${esc(t.gauge)})` : "ความหนาไม่อยู่ในตารางค่ายืด ใช้ K-factor กับทุกรอยพับ"]);

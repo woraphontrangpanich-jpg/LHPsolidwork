@@ -275,7 +275,19 @@ def analyze(sd: SolidData, max_thickness: float = 12.7, min_thickness: float = 0
     for grp in pieces:
         ordered = sorted(grp, key=lambda c: (-round(area(comps[c]), 3), min(comps[c])))
         main = ordered[0]
-        res.pieces.append({"faces": comps[main], "others": [comps[c] for c in ordered[1:]]})
+        faces = comps[main]
+        # Only "faces" (one side of the sheet) is unfolded. The other components are normally the opposite
+        # side of the same flanges; a flat face of theirs that is NOT opposite a face of "faces" is a part of the
+        # sheet the unfold never reaches (e.g. a Z drawn with bends rounded on one side only): keep it as "lost".
+        covered = set(faces)
+        for fid in faces:
+            if fid in infos:
+                covered.add(infos[fid][1])
+        lost = sorted(fid for c in ordered[1:] for fid in comps[c]
+                      if by_id[fid].kind == "plane" and fid not in covered
+                      and not (fid in infos and infos[fid][1] in faces))
+        res.pieces.append({"faces": faces, "others": [comps[c] for c in ordered[1:]],
+                           "lost": lost, "lost_area": float(sum(by_id[fid].area for fid in lost))})
 
     # faces that are neither skin nor plain side faces (formed features, cones, ...)
     for f in sd.faces:
